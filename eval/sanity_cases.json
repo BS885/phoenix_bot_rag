@@ -6,7 +6,7 @@
     "metric top1: only 'primary' chunks count and must rank first. metric top3: any acceptable chunk may be in the first three.",
     "type 'coverage' = personal coverage question (what is MY refund / MY coverage): reported, but excluded from the separation calculation (include_in_separation=false).",
     "Empty queries (the old slots at the end) are ignored. Negatives: 'far' = unrelated; 'near_topic' = insurance-sounding but not in the index.",
-    "valid_until_crawled=true: the site probably has such pages, so after the full crawl they stop being negatives."
+    "After the full crawl (waves A-C) the car-insurance and apartment-insurance near-topic negatives were REMOVED: the site answers them (they become positive smoke questions). proposed=true: new negatives awaiting the owner's approval; all are topics NOT on the crawled site (investor relations, careers, class actions and competitors are out of scope)."
   ],
   "cases": [
     {
@@ -70,10 +70,14 @@
     {"kind": "far", "query": "מה שער הדולר היום?"},
     {"kind": "far", "query": "איך מכינים שקשוקה?"},
     {"kind": "far", "query": "מי ניצח במשחק הכדורגל אתמול?"},
-    {"kind": "near_topic", "valid_until_crawled": true, "query": "כמה עולה ביטוח חובה לרכב?"},
-    {"kind": "near_topic", "valid_until_crawled": true, "query": "איך מגישים תביעה אחרי תאונת דרכים בביטוח רכב?"},
-    {"kind": "near_topic", "valid_until_crawled": true, "query": "איך מקבלים פיצוי מביטוח דירה על נזק ממים?"},
     {"kind": "near_topic", "valid_until_crawled": false, "query": "מה גובה קצבת הנכות מהביטוח הלאומי?"},
-    {"kind": "near_topic", "valid_until_crawled": false, "query": "איך קובעים תור לרופא מומחה דרך קופת חולים מכבי?"}
+    {"kind": "near_topic", "valid_until_crawled": false, "query": "איך קובעים תור לרופא מומחה דרך קופת חולים מכבי?"},
+    {"kind": "near_topic", "proposed": true, "query": "מה מחיר מניית הפניקס היום בבורסה?"},
+    {"kind": "near_topic", "proposed": true, "query": "איזה משרות פתוחות יש בהפניקס?"},
+    {"kind": "near_topic", "proposed": true, "query": "כמה עולה ביטוח רכב בחברת הראל?"},
+    {"kind": "near_topic", "proposed": true, "query": "מה גובה קצבת הזקנה מהביטוח הלאומי?"},
+    {"kind": "near_topic", "proposed": true, "query": "מה ריבית המשכנתא הנוכחית בבנק לאומי?"},
+    {"kind": "near_topic", "proposed": true, "query": "איך מגישים תביעה ייצוגית נגד הפניקס?"},
+    {"kind": "near_topic", "proposed": true, "query": "מה לעשות כשיש פנצ'ר בכביש מהיר?"}
   ]
 }

@@ -191,11 +191,26 @@ def clean_html(html: bytes | str) -> dict:
         if not deduped or deduped[-1]["text"] != b["text"]:
             deduped.append(b)
     blocks = deduped
+    blocks = [b for b in blocks if not _is_noise_block(b)]
 
     h1 = next((b["text"] for b in blocks if b["type"] == "h1"), None)
     title = h1 or (_norm(soup.title.get_text()) if soup.title else "")
     chars = sum(len(b["text"]) for b in blocks)
     return {"title": title, "blocks": blocks, "chars": chars, "empty": chars < config.MIN_PAGE_CHARS}
+
+
+_NOISE_RE = None
+
+
+def _is_noise_block(block: dict) -> bool:
+    """UI chrome: a paragraph whose WHOLE text is a known label (config.NOISE_BLOCKS_*). Headings are kept."""
+    global _NOISE_RE
+    if block["type"] != "p":
+        return False
+    if _NOISE_RE is None:
+        _NOISE_RE = [re.compile(p) for p in config.NOISE_BLOCK_PATTERNS]
+    t = block["text"]
+    return t in config.NOISE_BLOCKS_EXACT or any(r.fullmatch(t) for r in _NOISE_RE)
 
 
 def strip_repeated(docs: list[dict]) -> list[dict]:

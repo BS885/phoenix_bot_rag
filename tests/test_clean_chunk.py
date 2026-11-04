@@ -373,3 +373,49 @@ class TestStage2Fixes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNoiseBlocks(unittest.TestCase):
+    def blocks(self, body):
+        return [(b["type"], b["text"]) for b in clean.clean_html(page(f"<h1>כותרת</h1>{body}<p>{LONG}</p>"))["blocks"]]
+
+    def test_exact_noise_paragraphs_are_removed(self):
+        body = ("<p>תגיות:</p><p>טעינת כתבות נוספות</p><p>מה חדש</p><p>ביטוח רכב</p><p>Play</p>"
+                "<p>הצגת 8 שאלות נוספות</p><p>סרטון סרטון מהו ביטוח בריאות פרטי?</p><p>לקבלת הצעה</p>")
+        self.assertEqual([t for k, t in self.blocks(body) if k == "p"], [LONG.strip()])
+
+    def test_longer_block_containing_the_label_is_kept(self):
+        body = "<p>מה חדש בביטוח רכב</p><p>לקבלת הצעה היום</p><p>ביטוח רכב מקיף</p>"
+        texts = [t for k, t in self.blocks(body)]
+        for keep in ("מה חדש בביטוח רכב", "לקבלת הצעה היום", "ביטוח רכב מקיף"):
+            self.assertIn(keep, texts)
+
+    def test_headings_and_list_items_with_a_noise_text_are_kept(self):
+        got = self.blocks("<h2>מה חדש</h2><h2>טיפים</h2><ul><li>ביטוח רכב</li></ul>")
+        self.assertIn(("h2", "מה חדש"), got)
+        self.assertIn(("h2", "טיפים"), got)
+        self.assertIn(("li", "ביטוח רכב"), got)
+
+    def test_link_blocks_with_an_address_are_kept(self):
+        got = self.blocks('<a href="https://smart.fnx.co.il/x">לקבלת הצעה</a>')
+        self.assertTrue(any("לקבלת הצעה" in t and "smart.fnx.co.il" in t for k, t in got))
+
+
+class TestProduct(unittest.TestCase):
+    def test_product_is_first_segment_and_named(self):
+        doc = clean.clean_html(page(f"<h1>כותרת</h1><h2>נושא</h2><p>{LONG}</p>"))
+        for url, slug in (("https://www.fnx.co.il/car-insurance/car_information/x/", "car-insurance"),
+                          ("https://www.fnx.co.il/claims-customer-service/claims-health-insurance/", "claims-customer-service")):
+            for c in chunk.chunk_page(doc, url, {}):
+                self.assertEqual(c["product"], slug)
+                self.assertTrue(c["product_name"])
+                self.assertTrue(all(v is not None for v in c.values()))
+
+    def test_every_in_scope_segment_of_the_corpus_has_a_name(self):
+        import json
+        if not config.FETCH_INDEX.exists():
+            self.skipTest("no crawl index")
+        from ingest import urls
+        segs = {chunk.product_of(u) for u, e in json.loads(config.FETCH_INDEX.read_text(encoding="utf-8")).items()
+                if e.get("file") and urls.is_allowed_url(u)}
+        self.assertEqual(sorted(s for s in segs if s not in config.PRODUCT_NAMES), [])

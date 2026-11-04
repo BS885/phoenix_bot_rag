@@ -125,7 +125,9 @@ class TestCasesFile(unittest.TestCase):
     def test_near_topic_negatives_present(self):
         near = [n for n in self.data["negatives"] if n["kind"] == "near_topic"]
         self.assertGreaterEqual(len(near), 4)
-        self.assertTrue(any("רכב" in n["query"] for n in near))
+        # the car / apartment questions are answered by the crawled site and must not be negatives any more
+        self.assertFalse(any("תאונת דרכים" in n["query"] or "ביטוח חובה" in n["query"] or "ביטוח דירה" in n["query"] for n in near))
+        self.assertFalse(any(n.get("valid_until_crawled") for n in near))
 
 
 if __name__ == "__main__":

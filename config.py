@@ -44,6 +44,20 @@ STRIP_REPEATED_BLOCKS = False  # off: it also removes useful repeated lines (con
 BOILERPLATE_HEADINGS = ("כל הדרכים לדבר איתנו", "אולי יעניין אותך")
 DROP_LINK_ONLY_SECTIONS = True  # a section made only of links, with no sentence, is not indexed
 LINK_ONLY_EXEMPT_AREAS = ("claims",)  # ...except in these areas: there the links ARE the answer (claim forms)
+# UI noise: a paragraph block is removed ONLY when its whole text equals one of these (exact / full regex match);
+# a longer block that merely contains the string is never touched. Headings (h1-h4) are never removed.
+NOISE_BLOCKS_EXACT = (
+    "תגיות", "תגיות:", "טעינת כתבות נוספות", "Play", "לקבלת הצעה", "קבלת הצעה",   # tag toggle, load-more, video, CTA
+    "מה חדש",                                                                         # article tag chip
+    # article category chips (the label printed above a teaser card)
+    "ביטוח רכב", "ביטוח בריאות", "ביטוח לחיות מחמד", "חיסכון והשקעה", "ביטוח מקיף", "ביטוח נהג צעיר",
+    "תכנון פרישה לגיל שלישי", "ביטוח מחלות קשות", "ביטוחים נוספים", "קופות גמל", "אובדן כושר עבודה ונכות",
+    "קרן השתלמות לעצמאים", "ביטוח מבנה", "טיפים", "מושגים",
+)
+NOISE_BLOCK_PATTERNS = (
+    r"הצגת \d+ שאלות נוספות",          # "show N more questions"
+    r"סרטון סרטון .+",                   # video popup opener: "סרטון סרטון <video title>"
+)
 CTA_LABELS = ("הגשת תביעה",)  # a block that is only this button label is dropped (the link block carries it)
 ROW_TITLE_STRIP = ("מידע נוסף על המסלול",)  # UI text removed from a table row's name cell
 REPEAT_THRESHOLD = 0.2       # block appearing in more than this share of pages is boilerplate
@@ -56,6 +70,32 @@ AREA_BY_PREFIX = {
     "/customer-service/": "customer-service",
 }
 DEFAULT_AREA = "product"
+# `product` = first URL segment; PRODUCT_NAMES maps it to a readable Hebrew name (used in answers / clarify).
+# A segment missing here gets product_name = "" (tests fail when the corpus has an unmapped segment).
+PRODUCT_NAMES = {
+    "car-insurance": "ביטוח רכב",
+    "travel-insurance": "ביטוח נסיעות לחו\"ל",
+    "apartment-insurance": "ביטוח דירה",
+    "health-insurance": "ביטוח בריאות",
+    "life-insurance": "ביטוח חיים",
+    "disability-and-incapacity-to-work": "אובדן כושר עבודה ונכות",
+    "mortgage-insurance": "ביטוח משכנתא",
+    "pets-insurance": "ביטוח לחיות מחמד",
+    "business-insurance": "ביטוח עסקים",
+    "truck-insurance": "ביטוח משאיות",
+    "marine_aviation_insurance": "ביטוח ימי ואווירי",
+    "other-insurances": "ביטוחים נוספים",
+    "pension-savings": "פנסיה וביטוח מנהלים",
+    "pension_retirement": "פרישה וקצבה",
+    "gemel": "קופות גמל",
+    "ishtalmutfund": "קרנות השתלמות",
+    "savings": "חיסכון והשקעות",
+    "alternativeinvestments": "השקעות אלטרנטיביות",
+    "loans": "הלוואות",
+    "takanottashlum": "תקנות התשלומים (מעסיקים)",
+    "claims-customer-service": "תביעות ושירות לקוחות",
+    "customer-service": "שירות לקוחות",
+}
 
 # --- embeddings / index (stage 3) ---
 # gemini-embedding-2: no task_type; the task is expressed with a text template (per Google's docs).

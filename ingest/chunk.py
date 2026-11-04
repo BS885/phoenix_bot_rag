@@ -14,6 +14,12 @@ def area_of(url: str) -> str:
     return config.DEFAULT_AREA
 
 
+def product_of(url: str) -> str:
+    """First path segment of the URL ("" for the home page)."""
+    parts = [p for p in urlparse(url).path.split("/") if p]
+    return parts[0] if parts else ""
+
+
 def _words(text: str) -> int:
     return len(text.split())
 
@@ -140,6 +146,7 @@ def chunk_page(doc: dict, url: str, meta: dict | None = None) -> list[dict]:
     pieces = []
     seen_titles: dict[str, int] = {}
     area = area_of(url)
+    product = product_of(url)
     drop_link_only = config.DROP_LINK_ONLY_SECTIONS and area not in config.LINK_ONLY_EXEMPT_AREAS
     for sec in _sections(doc["blocks"], page_title, drop_link_only):
         k = seen_titles[sec["title"]] = seen_titles.get(sec["title"], -1) + 1
@@ -188,6 +195,8 @@ def chunk_page(doc: dict, url: str, meta: dict | None = None) -> list[dict]:
             "section_id": section_id,
             "anchor": anchor or "",  # real #id on the page, "" when the section has none
             "area": area,
+            "product": product,
+            "product_name": config.PRODUCT_NAMES.get(product, ""),
             "short": _words(body) < config.MIN_CHUNK_WORDS,  # could not be merged with a neighbour of its topic
             "collected_at": meta.get("collected_at") or "",
             "lastmod": meta.get("lastmod") or "",
