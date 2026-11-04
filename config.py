@@ -31,12 +31,19 @@ PRIORITY_PREFIXES = {
 DEFAULT_PRIORITY = 3
 
 # --- cleaning / chunking ---
-MIN_PAGE_CHARS = 200          # below this after cleaning the page is marked empty
+INDICATOR_PATTERNS = (r"^שקופית(?: מספר)? \d+ מתוך \d+$", r"^slide \d+ of \d+$")  # carousel position labels
+MIN_PAGE_CHARS = 200         # below this after cleaning the page is marked empty
 STRIP_REPEATED_BLOCKS = False  # off: it also removes useful repeated lines (contact details) on a claims-heavy sample
-BOILERPLATE_HEADINGS = ("כל הדרכים לדבר איתנו",)  # sections dropped entirely (same box on every page)
+# sections dropped entirely, matched by heading prefix: the contact box repeated on every page,
+# and article teasers (titles only, no content)
+BOILERPLATE_HEADINGS = ("כל הדרכים לדבר איתנו", "אולי יעניין אותך")
+DROP_LINK_ONLY_SECTIONS = True  # a section made only of links, with no sentence, is not indexed
+LINK_ONLY_EXEMPT_AREAS = ("claims",)  # ...except in these areas: there the links ARE the answer (claim forms)
+CTA_LABELS = ("הגשת תביעה",)  # a block that is only this button label is dropped (the link block carries it)
+ROW_TITLE_STRIP = ("מידע נוסף על המסלול",)  # UI text removed from a table row's name cell
 REPEAT_THRESHOLD = 0.2       # block appearing in more than this share of pages is boilerplate
 REPEAT_MIN_PAGES = 5          # do not strip repeated blocks on tiny corpora
-MAX_CHUNK_WORDS = 500
+MAX_CHUNK_WORDS = 250
 MIN_CHUNK_WORDS = 60
 CHUNK_OVERLAP_SENTENCES = 1   # only when a single paragraph over MAX_CHUNK_WORDS is cut
 AREA_BY_PREFIX = {

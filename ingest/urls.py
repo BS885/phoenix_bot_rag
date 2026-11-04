@@ -1,7 +1,7 @@
 """Sitemap parsing, URL filtering, robots.txt and priorities. Pure functions: no network here."""
 import re
 import xml.etree.ElementTree as ET
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urldefrag, urlparse
 from urllib.robotparser import RobotFileParser
 
 import config
@@ -53,6 +53,20 @@ def priority(url: str) -> int:
         if any(path.startswith(x) for x in prefixes):
             return level
     return config.DEFAULT_PRIORITY
+
+
+def normalize_url(url: str) -> str:
+    """Drop the #fragment: it is client-side only and never part of the request."""
+    return urldefrag(url.strip())[0]
+
+
+def fetchable(url: str, robots: RobotFileParser | None) -> tuple[bool, str]:
+    """Same gate as the crawl: URL filter first, then robots.txt. Returns (ok, reason)."""
+    if not is_allowed_url(url):
+        return False, "excluded by the URL filter"
+    if robots is not None and not robots.can_fetch(config.USER_AGENT, url):
+        return False, "disallowed by robots.txt"
+    return True, ""
 
 
 def make_robots(robots_text: str) -> RobotFileParser:

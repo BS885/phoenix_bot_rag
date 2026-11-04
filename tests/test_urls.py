@@ -56,5 +56,26 @@ class TestParsing(unittest.TestCase):
         self.assertEqual([p["url"] for p in out], [H + "/ok/"])
 
 
+class TestFetchable(unittest.TestCase):
+    ROBOTS = "User-agent: *\nDisallow: /private/\n"
+
+    def test_fragment_removed(self):
+        self.assertEqual(urls.normalize_url(H + "/health-insurance/extra-covers/#faq"), H + "/health-insurance/extra-covers/")
+
+    def test_allowed_page_passes(self):
+        ok, reason = urls.fetchable(H + "/health-insurance/", urls.make_robots(self.ROBOTS))
+        self.assertEqual((ok, reason), (True, ""))
+
+    def test_robots_disallow_blocks(self):
+        ok, reason = urls.fetchable(H + "/private/x/", urls.make_robots(self.ROBOTS))
+        self.assertFalse(ok)
+        self.assertIn("robots", reason)
+
+    def test_filter_blocks_before_robots(self):
+        ok, reason = urls.fetchable(H + "/en/page/", urls.make_robots(self.ROBOTS))
+        self.assertFalse(ok)
+        self.assertIn("filter", reason)
+
+
 if __name__ == "__main__":
     unittest.main()

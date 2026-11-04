@@ -125,7 +125,13 @@ def main() -> None:
                         format="%(asctime)s %(levelname)s %(message)s")
 
     if args.url:
-        print(fetch_pages([{"url": args.url, "lastmod": None}]))
+        url = urls.normalize_url(args.url)
+        robots = urls.make_robots(get_with_retry(config.ROBOTS_URL).text)
+        ok, reason = urls.fetchable(url, robots)
+        if not ok:
+            print(f"refused: {url} ({reason})")
+            return
+        print(fetch_pages([{"url": url, "lastmod": None, "priority": urls.priority(url)}]))
         return
     pages = discover_urls()
     if args.match:

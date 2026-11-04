@@ -59,6 +59,8 @@ phoenix_bot/
 ├── index/   build_index.py
 ├── bot/     rewrite.py guardrails.py retrieve.py prompt.py answer.py
 ├── eval/    questions.json run_eval.py
+├── scripts/ coverage_check.py   (כיסוי ניקוי: data/raw_html -> logs/coverage.md)
+│            chunk_stats.py      (סטטיסטיקות חיתוך -> logs/chunk_stats.md)
 ├── data/raw_html/   logs/   tests/   docs/   README.md
 ```
 
