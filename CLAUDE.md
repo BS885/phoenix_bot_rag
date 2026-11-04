@@ -56,11 +56,12 @@
 phoenix_bot/
 ├── .env, .env.example, config.py, bootstrap.py, llm.py, app.py
 ├── ingest/  urls.py fetch.py clean.py chunk.py
-├── index/   build_index.py
+├── index/   embed.py build_index.py
 ├── bot/     rewrite.py guardrails.py retrieve.py prompt.py answer.py
-├── eval/    questions.json run_eval.py
+├── eval/    questions.json run_eval.py sanity_cases.json smoke_questions.json
 ├── scripts/ coverage_check.py   (כיסוי ניקוי: data/raw_html -> logs/coverage.md)
 │            chunk_stats.py      (סטטיסטיקות חיתוך -> logs/chunk_stats.md)
+│            embed_sanity.py     (שפיות הטמעה, דורש מפתח)  ask_index.py (שאלות סינון top-3, דורש מפתח)
 ├── data/raw_html/   logs/   tests/   docs/   README.md
 ```
 
@@ -72,7 +73,9 @@ Python: 3.13 (מותקן במחשב; לאמת תאימות חבילות לפני
 | סביבה | `python -m venv .venv` ואז `.venv\Scripts\Activate.ps1` |
 | התקנה (באישור) | `pip install -r requirements.txt` |
 | בדיקות | `pytest tests/` |
-| בניית אינדקס | `python -m index.build_index` |
+| בניית אינדקס | `python -m index.build_index` (`--dry-run` בלי API; דורש `GEMINI_API_KEY` ב-`.env`) |
+| סימון עמודים שנעלמו | `python -m ingest.fetch --mark-gone` (קורא sitemap, באישור) |
+| שפיות הטמעה / שאלות סינון | `python scripts/embed_sanity.py` / `python scripts/ask_index.py` (דורשים מפתח) |
 | ממשק | `streamlit run app.py` |
 | הערכה | `python -m eval.run_eval` |
 

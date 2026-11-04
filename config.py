@@ -51,3 +51,25 @@ AREA_BY_PREFIX = {
     "/customer-service/": "customer-service",
 }
 DEFAULT_AREA = "product"
+
+# --- embeddings / index (stage 3) ---
+# gemini-embedding-2: no task_type; the task is expressed with a text template (per Google's docs).
+EMBED_MODEL = "gemini-embedding-2"
+EMBED_DIM = 768                 # recommended sizes: 768 / 1536 / 3072; truncated vectors are renormalized by the API
+EMBED_DOC_TEMPLATE = "title: {title} | text: {body}"
+EMBED_QUERY_TEMPLATE = "task: search result | query: {query}"
+EMBED_BATCH = 16                # texts per request; raise only after the batch-consistency probe passes
+EMBED_BATCH_MAX_TOKENS_EST = 6000   # estimated tokens per request, under the 8192 model limit
+EMBED_MODEL_MAX_TOKENS = 8192   # inputs above this are truncated silently by the API
+EMBED_CHARS_PER_TOKEN = 2.0     # conservative Hebrew estimate: there is no documented count_tokens for this model
+EMBED_TOKEN_WARN_RATIO = 0.9    # warn when a text is estimated above this share of the limit
+EMBED_RETRIES = 5
+EMBED_BACKOFF_SEC = 2.0         # doubles on every retry (429 / 5xx)
+EMBED_MIN_INTERVAL_SEC = 1.0    # minimum gap between API calls; free-tier quota not documented: check AI Studio
+EMBED_CACHE_PATH = ROOT / "data" / "embed_cache.sqlite"
+CHROMA_DIR = ROOT / "data" / "chroma_db"
+COLLECTION_PREFIX = "chunks"
+INDEX_MANIFEST = ROOT / "data" / "index_manifest.json"
+KEEP_OLD_COLLECTIONS = 1        # previous collections kept for rollback
+DEDUP_NEAR_THRESHOLD = 0.03     # cosine distance; near-duplicates are only REPORTED, never merged
+AREA_RANK = {"claims": 0, "customer-service": 1, "product": 2}  # which page is "primary" for merged duplicates

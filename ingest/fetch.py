@@ -60,6 +60,23 @@ def _save_index(index: dict) -> None:
     config.FETCH_INDEX.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def mark_gone(index: dict, active_urls: set[str]) -> tuple[dict, list[str], list[str]]:
+    """Flag pages that are no longer in the sitemap (gone=true); un-flag pages that came back.
+
+    The index builder skips gone pages. Nothing is deleted from disk or from the index file.
+    Returns (index, newly_gone, revived).
+    """
+    newly_gone, revived = [], []
+    for url, entry in index.items():
+        if url in active_urls and entry.get("gone"):
+            del entry["gone"]
+            revived.append(url)
+        elif url not in active_urls and not entry.get("gone"):
+            entry["gone"] = True
+            newly_gone.append(url)
+    return index, newly_gone, revived
+
+
 def discover_urls() -> list[dict]:
     """Read robots.txt and sitemap(s) from the site; return filtered, prioritized pages."""
     robots_text = get_with_retry(config.ROBOTS_URL).text
@@ -117,6 +134,8 @@ def main() -> None:
     g.add_argument("--list", action="store_true")
     g.add_argument("--sample", type=int, nargs="?", const=config.SAMPLE_SIZE)
     g.add_argument("--url")
+    g.add_argument("--mark-gone", action="store_true",
+                   help="read the sitemap and flag saved pages that vanished (gone=true); downloads nothing")
     ap.add_argument("--match", help="keep only URLs containing this text (e.g. health)")
     args = ap.parse_args()
 
@@ -132,6 +151,14 @@ def main() -> None:
             print(f"refused: {url} ({reason})")
             return
         print(fetch_pages([{"url": url, "lastmod": None, "priority": urls.priority(url)}]))
+        return
+    if args.mark_gone:
+        active = {p["url"] for p in discover_urls()}
+        index, newly_gone, revived = mark_gone(_load_index(), active)
+        _save_index(index)
+        print(f"newly gone: {len(newly_gone)}, revived: {len(revived)}")
+        for u in newly_gone:
+            print("  gone:", u)
         return
     pages = discover_urls()
     if args.match:

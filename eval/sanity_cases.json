@@ -1,0 +1,79 @@
+{
+  "_readme": [
+    "Embedding sanity cases. Queries are written by the project owner and are ambiguous ON PURPOSE: do not rephrase them.",
+    "acceptable = chunks that can answer the question, identified by url + section_title (+ text_contains when a section title repeats on a page).",
+    "role: 'primary' = the best answer; 'secondary' = a partial or related answer that is also fine.",
+    "metric top1: only 'primary' chunks count and must rank first. metric top3: any acceptable chunk may be in the first three.",
+    "type 'coverage' = personal coverage question (what is MY refund / MY coverage): reported, but excluded from the separation calculation (include_in_separation=false).",
+    "Empty queries (the old slots at the end) are ignored. Negatives: 'far' = unrelated; 'near_topic' = insurance-sounding but not in the index.",
+    "valid_until_crawled=true: the site probably has such pages, so after the full crawl they stop being negatives."
+  ],
+  "cases": [
+    {
+      "id": "q1", "query": "יש לי ניתוח, מה אני צריך לעשות בשביל זה?",
+      "type": "ambiguous", "metric": "top3", "include_in_separation": true,
+      "expected_behavior": "Several readings: claim a refund for a surgery, get approval for a future surgery, urgent surgery (phone), surgery abroad. Any of the chunks below is a fair answer.",
+      "acceptable": [
+        {"role": "primary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/surgery-treatment-covers/", "section_title": "איך מגישים תביעה?", "text_contains": "טופס תביעה דיגיטלי"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/surgery-treatment-covers/", "section_title": "איך מגישים תביעה?", "text_contains": "ניתוח דחוף"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/surgery-treatment-covers/", "section_title": "ניתוחים, טיפולים מחליפי ניתוח"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/", "section_title": "אישור לניתוח עתידי"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/", "section_title": "קבלת החזר על ניתוח"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/surgery-transplants-treatments-abroad/", "section_title": "איך מגישים תביעה?"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/", "section_title": "כל מה שצריך לדעת על הטיפול בתביעה"}
+      ]
+    },
+    {
+      "id": "q2", "query": "מה ההחזר שיש לי על דיקור סיני?",
+      "type": "coverage", "metric": "top3", "include_in_separation": false,
+      "expected_behavior": "No chunk mentions acupuncture or any refund amount. Correct behavior: general information about complementary/alternative treatments (a service letter 'complementary medicine', up to 10 treatments per insurance year; claim form for alternative medicine) + the coverage disclaimer + referral to customer service. Never an invented amount.",
+      "acceptable": [
+        {"role": "primary", "url": "https://www.fnx.co.il/health-insurance/extra-covers/", "section_title": "מעטפת מקיפה של הרחבות וכיסויים"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/cover-expenses-for-ambulatory-services/", "section_title": "איך מגישים תביעה?"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/", "section_title": "טיפולים אלטרנטיביים"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/health-insurance/extra-covers/", "section_title": "למה צריך כיסויים נוספים"}
+      ]
+    },
+    {
+      "id": "q3", "query": "לייעוץ הרופא, מה אני צריך לצרף?",
+      "type": "ambiguous", "metric": "top3", "include_in_separation": true,
+      "expected_behavior": "The consultation claim page does not list attachments: it says to fill in the digital form or to SMS the word 'מסמך' to 055-7000887 for instructions. Generic lines on other claim pages say 'attach the receipts and relevant documents'. A partial answer with these pointers is right; an invented list is wrong.",
+      "acceptable": [
+        {"role": "primary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/cover-expenses-for-ambulatory-services/", "section_title": "איך מגישים תביעה?"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/", "section_title": "התייעצות עם רופא מומחה"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/surgery-treatment-covers/", "section_title": "איך מגישים תביעה?", "text_contains": "טופס תביעה דיגיטלי"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/claims-medications-not-included/", "section_title": "איך מגישים תביעה?"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/surgery-transplants-treatments-abroad/", "section_title": "איך מגישים תביעה?"}
+      ]
+    },
+    {
+      "id": "q4", "query": "מה הכיסוי שלי על תרופות?",
+      "type": "coverage", "metric": "top3", "include_in_separation": false,
+      "expected_behavior": "Personal coverage question: general explanation (medication outside the health basket, prior approval from the insurer before buying) + the coverage disclaimer + referral. No personal amounts.",
+      "acceptable": [
+        {"role": "primary", "url": "https://www.fnx.co.il/health-insurance/", "section_title": "ביטוחי הבריאות שלנו"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/claims-medications-not-included/", "section_title": "איך מגישים תביעה?"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/", "section_title": "תרופה שאינה כלולה"}
+      ]
+    },
+    {
+      "id": "q5", "query": "מחלה קשה, ומה אני צריך לצרף בשביל התביעה?",
+      "type": "clear", "metric": "top1", "include_in_separation": true,
+      "expected_behavior": "Explicit answer in one chunk: attach a medical diagnosis, additional medical documents, and the date the illness was first discovered.",
+      "acceptable": [
+        {"role": "primary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/claims-serious-illness/", "section_title": "איך מגישים תביעה?", "text_contains": "אבחנה רפואית"},
+        {"role": "secondary", "url": "https://www.fnx.co.il/claims-customer-service/claims-health-insurance/", "section_title": "מחלות קשות"}
+      ]
+    }
+  ],
+  "negatives": [
+    {"kind": "far", "query": "מה שער הדולר היום?"},
+    {"kind": "far", "query": "איך מכינים שקשוקה?"},
+    {"kind": "far", "query": "מי ניצח במשחק הכדורגל אתמול?"},
+    {"kind": "near_topic", "valid_until_crawled": true, "query": "כמה עולה ביטוח חובה לרכב?"},
+    {"kind": "near_topic", "valid_until_crawled": true, "query": "איך מגישים תביעה אחרי תאונת דרכים בביטוח רכב?"},
+    {"kind": "near_topic", "valid_until_crawled": true, "query": "איך מקבלים פיצוי מביטוח דירה על נזק ממים?"},
+    {"kind": "near_topic", "valid_until_crawled": false, "query": "מה גובה קצבת הנכות מהביטוח הלאומי?"},
+    {"kind": "near_topic", "valid_until_crawled": false, "query": "איך קובעים תור לרופא מומחה דרך קופת חולים מכבי?"}
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "_readme": "Draft smoke questions for scripts/ask_index.py (written by the assistant, not blind). expect_url_contains is only used to mark a hit in the top-3; empty means 'nothing should match' (negative).",
+  "questions": [
+    {"q": "תוך כמה זמן מקבלים תשובה על תביעה?", "expect_url_contains": "/claims-customer-service/claims-health-insurance/"},
+    {"q": "איך מגישים תביעה להחזר על תרופה שאינה בסל הבריאות?", "expect_url_contains": "claims-medications-not-included"},
+    {"q": "לאן שולחים את טופס התביעה, בפקס או במייל?", "expect_url_contains": "/claims-customer-service/claims-health-insurance/"},
+    {"q": "מה זה כיסוי אמבולטורי?", "expect_url_contains": "/health-insurance/"},
+    {"q": "תוך כמה זמן אפשר להגיש תביעה? מה תקופת ההתיישנות?", "expect_url_contains": "/claims-customer-service/claims-health-insurance/"},
+    {"q": "איך מבטלים את ביטוח הבריאות?", "expect_url_contains": "/health-insurance/"},
+    {"q": "מה התשואה של קרן השתלמות מניות?", "expect_url_contains": "tzishtalmut"},
+    {"q": "מי יכול ליהנות משירות A LIST?", "expect_url_contains": "a-list"},
+    {"q": "מה שער הדולר היום?", "expect_url_contains": ""},
+    {"q": "כמה עולה ביטוח חובה לרכב?", "expect_url_contains": ""}
+  ]
+}
