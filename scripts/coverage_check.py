@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT))
 from bs4 import BeautifulSoup  # noqa: E402
 
 import config  # noqa: E402
-from ingest import clean  # noqa: E402
+from ingest import clean, urls  # noqa: E402
 
 _HIDDEN = ["script", "style", "noscript", "svg"]  # not visible text: excluded from the baseline
 _HAS_CONTENT = re.compile(r"[\w֐-׿]")
@@ -84,6 +84,10 @@ def main() -> None:
     args = ap.parse_args()
 
     index = json.loads(config.FETCH_INDEX.read_text(encoding="utf-8"))
+    # only pages that were downloaded: failed / 404 / gone entries have no saved HTML
+    index = {u: e for u, e in index.items()
+             if e.get("file") and e.get("status", "ok") == "ok" and not e.get("gone")
+                and urls.is_allowed_url(u)}  # out-of-scope pages stay on disk but are ignored
     results = {}
     for url, entry in index.items():
         results[url] = check_page((config.RAW_HTML_DIR / entry["file"]).read_bytes())

@@ -77,5 +77,26 @@ class TestFetchable(unittest.TestCase):
         self.assertIn("filter", reason)
 
 
+class TestOutOfScope(unittest.TestCase):
+    def test_class_actions_and_terms_of_use_are_excluded(self):
+        for path in ("/claims-customer-service/class-actions/credit-claim-1/",
+                     "/claims-customer-service/class-actions/", "/customer-service/terms-of-use/privacy-policy/"):
+            self.assertFalse(urls.is_allowed_url(H + path), path)
+
+    def test_neighbouring_claims_and_service_pages_stay_in_scope(self):
+        for path in ("/claims-customer-service/claims-health-insurance/", "/customer-service/car-insurance/",
+                     "/claims-customer-service/", "/customer-service/"):
+            self.assertTrue(urls.is_allowed_url(H + path), path)
+
+    def test_excluded_pages_never_reach_the_crawl_list(self):
+        pages = [{"url": H + "/claims-customer-service/class-actions/x/"}, {"url": H + "/customer-service/a/"}]
+        self.assertEqual([p["url"] for p in urls.select_urls(pages)], [H + "/customer-service/a/"])
+
+    def test_spf_iframe_pages_are_blocked_by_robots_txt(self):
+        robots = urls.make_robots("User-agent: *\nDisallow: /SPF\n")
+        ok, reason = urls.fetchable(H + "/SPF/iframe_health-insurance.aspx", robots)
+        self.assertFalse(ok)
+
+
 if __name__ == "__main__":
     unittest.main()

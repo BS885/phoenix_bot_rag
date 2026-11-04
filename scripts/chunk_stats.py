@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import config  # noqa: E402
-from ingest import chunk, clean  # noqa: E402
+from ingest import chunk, clean, urls  # noqa: E402
 
 
 def words(chunk_: dict) -> int:
@@ -20,6 +20,10 @@ def words(chunk_: dict) -> int:
 
 def main() -> None:
     index = json.loads(config.FETCH_INDEX.read_text(encoding="utf-8"))
+    # only pages that were downloaded: failed / 404 / gone entries have no saved HTML
+    index = {u: e for u, e in index.items()
+             if e.get("file") and e.get("status", "ok") == "ok" and not e.get("gone")
+                and urls.is_allowed_url(u)}  # out-of-scope pages stay on disk but are ignored
     rows, all_chunks = [], []
     for url, entry in index.items():
         doc = clean.clean_html((config.RAW_HTML_DIR / entry["file"]).read_bytes())

@@ -17,7 +17,7 @@ import time
 from datetime import datetime
 
 import config
-from ingest import chunk, clean
+from ingest import chunk, clean, urls
 from index import embed
 
 
@@ -31,10 +31,16 @@ def load_chunks(index_path=None) -> tuple[list[dict], dict]:
     """Chunks of every page in index.json that is not marked gone and not empty."""
     index_path = index_path or config.FETCH_INDEX
     index = json.loads(index_path.read_text(encoding="utf-8"))
-    chunks, report = [], {"pages": len(index), "gone": 0, "empty": 0, "missing_file": 0}
+    chunks, report = [], {"pages": len(index), "gone": 0, "empty": 0, "missing_file": 0, "no_content": 0, "out_of_scope": 0}
     for url, entry in index.items():
         if entry.get("gone"):
             report["gone"] += 1
+            continue
+        if not entry.get("file") or entry.get("status", "ok") != "ok":  # failed / 404 entries have no page
+            report["no_content"] += 1
+            continue
+        if not urls.is_allowed_url(url):  # excluded by config after it was saved: kept on disk, not indexed
+            report["out_of_scope"] += 1
             continue
         path = index_path.parent / entry["file"]
         if not path.exists():
@@ -237,7 +243,8 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     chunks, rep = load_chunks()
-    print(f"pages: {rep['pages']} (gone: {rep['gone']}, empty: {rep['empty']}, missing file: {rep['missing_file']})")
+    print(f"pages: {rep['pages']} (gone: {rep['gone']}, empty: {rep['empty']}, missing file: {rep['missing_file']}, "
+          f"no content: {rep['no_content']}, out of scope: {rep['out_of_scope']})")
     chunks, dd = dedupe_across_pages(chunks)
     print(f"chunks: {dd['before']} -> {dd['after']} after merging identical text across pages "
           f"({dd['groups_with_dups']} groups, {dd['merged_away']} removed)")

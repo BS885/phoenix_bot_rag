@@ -14,7 +14,9 @@ def run_cli(url: str):
     """Run `fetch --url <url>` with the network and the downloader mocked."""
     buf = io.StringIO()
     with mock.patch.object(fetch, "get_with_retry", return_value=ROBOTS), \
-            mock.patch.object(fetch, "fetch_pages", return_value={"downloaded": 1}) as fp, \
+            mock.patch.object(fetch, "fetch_pages", return_value={
+                "downloaded": ["u"], "skipped": [], "not_found": [], "failed": [], "blocked": [],
+                "stopped": None}) as fp, \
             mock.patch.object(sys, "argv", ["fetch", "--url", url]), \
             redirect_stdout(buf):
         fetch.main()

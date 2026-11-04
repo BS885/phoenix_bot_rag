@@ -19,7 +19,12 @@ MAX_RETRIES = 3
 SAMPLE_SIZE = 10
 
 # --- URL filtering ---
-EXCLUDED_PATH_PREFIXES = ("/en/", "/tags/", "/investor-relations/", "/career/", "/404/")
+EXCLUDED_PATH_PREFIXES = (
+    "/en/", "/tags/", "/investor-relations/", "/career/", "/404/",
+    # out of scope (decision 36): legal notices of class actions and the terms-of-use / privacy documents.
+    # Already saved HTML is kept on disk, but these pages are not indexed and not fetched again.
+    "/claims-customer-service/class-actions/", "/customer-service/terms-of-use/",
+)
 EXCLUDED_QUERY_PARAMS = ("page", "tag", "domain", "staff")
 EXCLUDED_PATH_SUFFIXES = ("-old",)  # pages whose last path segment ends with this
 
@@ -73,3 +78,21 @@ INDEX_MANIFEST = ROOT / "data" / "index_manifest.json"
 KEEP_OLD_COLLECTIONS = 1        # previous collections kept for rollback
 DEDUP_NEAR_THRESHOLD = 0.03     # cosine distance; near-duplicates are only REPORTED, never merged
 AREA_RANK = {"claims": 0, "customer-service": 1, "product": 2}  # which page is "primary" for merged duplicates
+
+# --- crawl safety and waves (stage 4) ---
+CRAWL_MAX_CONSECUTIVE_FAILURES = 10   # failures in a row (404 does not count) -> stop
+CRAWL_MAX_FAIL_RATE = 0.25            # share of failed requests, checked after CRAWL_MIN_ATTEMPTS_FOR_RATE
+CRAWL_MIN_ATTEMPTS_FOR_RATE = 40
+CRAWL_MAX_BLOCK_SIGNALS = 3           # 403 / 429 / too-long Retry-After seen this many times -> stop
+MAX_RETRY_AFTER_SEC = 300             # longer waits are treated as a block
+SECONDS_PER_PAGE_ESTIMATE = 2.3       # measured: 1.5 s delay + ~0.8 s request
+CRAWL_REPORT = LOG_DIR / "crawl_report.md"
+WAVES = {
+    "A": {"areas": ("claims", "customer-service")},
+    "B": {"segments": ("car-insurance", "travel-insurance", "apartment-insurance", "health-insurance",
+                       "mortgage-insurance", "pets-insurance", "other-insurances", "life-insurance",
+                       "business-insurance", "disability-and-incapacity-to-work", "marine_aviation_insurance",
+                       "truck-insurance")},
+    "C": {"segments": ("pension-savings", "gemel", "savings", "loans", "takanottashlum", "ishtalmutfund",
+                       "pension_retirement", "alternativeinvestments")},
+}  # wave D (corporate pages, calculators, ituran, ...) is deliberately not defined: out of scope
