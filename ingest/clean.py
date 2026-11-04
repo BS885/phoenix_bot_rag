@@ -18,8 +18,28 @@ _HAS_LETTER = re.compile(r"[A-Za-z֐-׿]")
 _INDICATORS = [re.compile(p) for p in config.INDICATOR_PATTERNS]
 
 
+_LETTER_RUN = re.compile(r"(?<![א-ת])(?:[א-ת] ){3,}[א-ת](?![א-ת])")
+_EMPTY_INLINE = ["span", "b", "strong", "i", "em", "u", "mark", "font", "small", "sup", "sub"]
+
+
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", text.translate(_ZERO_WIDTH).replace("\xa0", " ")).strip()
+    text = re.sub(r"\s+", " ", text.translate(_ZERO_WIDTH).replace("\xa0", " ")).strip()
+    # safety net: a run of 4+ single Hebrew letters separated by spaces ("ל ע ד כ ן") is a word that was
+    # split letter by letter; word boundaries inside such a run are unknowable, so the run is joined
+    return _LETTER_RUN.sub(lambda m: m.group().replace(" ", ""), text)
+
+
+def _drop_empty_inline(root) -> None:
+    """Remove empty inline tags and merge the text nodes around them.
+
+    Search-highlight widgets put an empty <b><span class="hightlight"></span></b> between every two
+    letters; get_text(' ') then turns each letter into its own word. After removing the empty tags the
+    letters are adjacent text nodes, smooth() merges them, and the real spaces are kept.
+    """
+    for tag in root.find_all(_EMPTY_INLINE):
+        if not tag.get_text(strip=True) and not tag.find(["img", "input", "a", "svg"]):
+            tag.decompose()
+    root.smooth()
 
 
 def is_indicator(text: str) -> bool:
@@ -105,6 +125,7 @@ def clean_html(html: bytes | str) -> dict:
         tag.decompose()
     for tag in [t for t in root.find_all(True) if _is_breadcrumb(t)]:
         tag.decompose()
+    _drop_empty_inline(root)
     _annotate_inline_links(root)
 
     blocks: list[dict] = []

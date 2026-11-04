@@ -101,6 +101,38 @@ class TestNoiseAndLooseText(unittest.TestCase):
         self.assertEqual(texts('<h1>x</h1><div><span>1</span><span>2</span></div>'), ["x"])
 
 
+class TestLetterSpacing(unittest.TestCase):
+    HIGHLIGHT = '<b><span class="hightlight"></span></b>'
+
+    def spaced(self, text: str) -> str:
+        """Markup like the site's search-highlight widget: an empty <b><span> before and after every character."""
+        return "".join(f"{self.HIGHLIGHT}{ch}" for ch in text) + self.HIGHLIGHT
+
+    def test_highlight_markup_does_not_split_words_into_letters(self):
+        html = f'<h1>x</h1><ul><li><a href="/u/"><span class="t">{self.spaced("לעדכן פרטים")}</span></a></li></ul>'
+        t = texts(html)
+        self.assertIn("לעדכן פרטים (https://www.fnx.co.il/u/)", t)  # the real space between the words survives
+
+    def test_standalone_link_with_highlight_markup(self):
+        html = f'<h1>x</h1><div><a href="/u/">{self.spaced("לבטל את הביטוח")}</a></div>'
+        self.assertIn("לבטל את הביטוח (https://www.fnx.co.il/u/)", texts(html))
+
+    def test_empty_inline_tags_keep_images_and_links(self):
+        d = clean.clean_html(page('<h1>x</h1><p>טקסט <a href="/a/"><img src="i.png"></a> נוסף</p>'))
+        self.assertIn("טקסט נוסף", [b["text"] for b in d["blocks"]])
+
+    def test_safety_net_joins_a_run_of_single_letters_already_in_the_text(self):
+        self.assertEqual(clean._norm("ל ע ד כ ן"), "לעדכן")
+        self.assertIn("לעדכן", texts("<h1>x</h1><p>כדי ל ע ד כ ן את הפרטים</p>")[1])
+
+    def test_short_runs_and_normal_text_are_untouched(self):
+        for s in ("א ב ג", "ב ו", "פרק א ב", "כל מה שצריך לדעת", "א. ב. ג. ד."):
+            self.assertEqual(clean._norm(s), s)
+
+    def test_run_is_only_joined_when_it_starts_a_token(self):
+        self.assertEqual(clean._norm("בדיקה א ב ג ד סוף"), "בדיקה אבגד סוף")
+
+
 class TestHeadings(unittest.TestCase):
     def test_h1_h2_inside_header_kept(self):
         d = clean.clean_html(page('<header><h1>כותרת</h1></header><header><h2>מקטע</h2></header><p>טקסט</p>'))
