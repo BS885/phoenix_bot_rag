@@ -437,3 +437,39 @@ class TestScope(unittest.TestCase):
         plan = bi.quota_plan(inputs, {embed.cache_key("א")}, usage)
         self.assertEqual((plan["texts"], plan["remaining_today"], plan["fits_today"]), (2, 2, True))
         self.assertFalse(bi.quota_plan(inputs, set(), usage)["fits_today"])
+
+
+class TestCumulative(IndexTestCase):
+    def chunks(self):
+        return [{**make_chunk(f"https://www.fnx.co.il/{p}/", "נושא", f"גוף {p}", n=i), "product": p}
+                for i, p in enumerate(["health-insurance", "car-insurance", "gemel", "car-insurance"])]
+
+    def key(self, c):
+        return embed.cache_key(embed.build_doc_input(c["text"]))
+
+    def test_add_cached_keeps_selected_plus_everything_in_the_cache(self):
+        cs = self.chunks()
+        selected = bi.select_chunks(cs, products=["health-insurance"])
+        out = bi.add_cached(cs, selected, {self.key(cs[2])})          # gemel was embedded earlier
+        self.assertEqual([c["product"] for c in out], ["health-insurance", "gemel"])
+        self.assertEqual([c["id"] for c in out], [cs[0]["id"], cs[2]["id"]])  # original order, same ids
+
+    def test_partial_build_does_not_drop_what_an_earlier_build_embedded(self):
+        cs = self.chunks()
+        e = FakeEmbedder()
+        client = bi.get_client(self.tmp / "chroma")
+        first = bi.build(bi.select_chunks(cs, products=["gemel"]), e, self.cache, client)
+        self.assertEqual(client.get_collection(first["collection"], embedding_function=None).count(), 1)
+        cached = self.cache.present([self.key(c) for c in cs])
+        wanted = bi.add_cached(cs, bi.select_chunks(cs, products=["health-insurance"]), cached)
+        second = bi.build(wanted, e, self.cache, client)
+        col = client.get_collection(second["collection"], embedding_function=None)
+        self.assertEqual(sorted(m["product"] for m in col.get(include=["metadatas"])["metadatas"]),
+                         ["gemel", "health-insurance"])
+        self.assertEqual(second["embed"]["misses"], 1)   # only health-insurance was new; gemel came from the cache
+
+    def test_product_table_counts_uncached_distinct_texts_in_the_requested_order(self):
+        cs = self.chunks()
+        rows = bi.product_table(cs, {self.key(cs[2])}, order=("gemel", "health-insurance"))
+        self.assertEqual([(r["product"], r["to_embed"]) for r in rows[:2]], [("gemel", 0), ("health-insurance", 1)])
+        self.assertEqual((rows[-1]["to_embed"], rows[-1]["chunks"]), (1, 2))  # two identical car-insurance texts = 1 to embed

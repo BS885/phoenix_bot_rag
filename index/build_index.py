@@ -111,6 +111,40 @@ def select_chunks(chunks: list[dict], wave: str | None = None, areas=None, produ
     return [c for c in chunks if c["area"] in areas or c["product"] in products]
 
 
+def add_cached(all_chunks: list[dict], selected: list[dict], cached_keys: set[str]) -> list[dict]:
+    """Cumulative build: the selected chunks PLUS every chunk whose vector is already in the cache.
+
+    A partial build therefore never drops what an earlier build already embedded. Original order is kept.
+    """
+    chosen = {c["id"] for c in selected}
+    return [c for c in all_chunks
+            if c["id"] in chosen or embed.cache_key(embed.build_doc_input(c["text"])) in cached_keys]
+
+
+PRODUCT_ORDER = ("health-insurance", "life-insurance", "disability-and-incapacity-to-work", "car-insurance",
+                 "apartment-insurance", "travel-insurance", "ishtalmutfund", "gemel", "pension-savings", "savings")
+
+
+def product_table(chunks: list[dict], cached_keys: set[str], order=PRODUCT_ORDER) -> list[dict]:
+    """Distinct texts (and estimated tokens) still to embed per product, after dedupe and without the cache."""
+    rows: dict[str, dict] = {}
+    seen: set[str] = set()
+    for c in chunks:
+        text = embed.build_doc_input(c["text"])
+        key = embed.cache_key(text)
+        r = rows.setdefault(c["product"], {"product": c["product"], "chunks": 0, "to_embed": 0, "tokens": 0})
+        r["chunks"] += 1
+        if key not in cached_keys and key not in seen:
+            seen.add(key)
+            r["to_embed"] += 1
+            r["tokens"] += embed.estimate_tokens(text)
+    first = [rows.pop(p) for p in order if p in rows]
+    rest = sorted(rows.values(), key=lambda r: -r["to_embed"])
+    other = {"product": f"other ({len(rest)} products)", "chunks": sum(r["chunks"] for r in rest),
+             "to_embed": sum(r["to_embed"] for r in rest), "tokens": sum(r["tokens"] for r in rest)}
+    return first + [other]
+
+
 def scope_label(wave=None, areas=None, products=None) -> str:
     parts = ([f"wave {wave}"] if wave else []) + [f"area {a}" for a in areas or []] + [f"product {p}" for p in products or []]
     return ", ".join(parts) or "all"
@@ -280,6 +314,9 @@ def main(argv=None) -> int:
     ap.add_argument("--wave", choices=sorted(config.WAVES), help="build only the chunks of this wave (config.WAVES)")
     ap.add_argument("--area", action="append", help="build only this area (claims / customer-service / product); repeatable")
     ap.add_argument("--product", action="append", help="build only this product (first URL segment); repeatable")
+    ap.add_argument("--no-cumulative", action="store_true",
+                    help="build ONLY the selected scope (default: the scope plus every chunk already in the cache)")
+    ap.add_argument("--by-product", action="store_true", help="print texts still to embed per product, then exit")
     ap.add_argument("--used-today", type=int, help="set today's used-texts counter (copy it from AI Studio)")
     args = ap.parse_args(argv)
 
@@ -293,10 +330,26 @@ def main(argv=None) -> int:
     chunks, dd = dedupe_across_pages(chunks)
     print(f"chunks: {dd['before']} -> {dd['after']} after merging identical text across pages "
           f"({dd['groups_with_dups']} groups, {dd['merged_away']} removed)")
+    cache = embed.EmbedCache(config.EMBED_CACHE_PATH)
+    if args.by_product:
+        cached = cache.present([embed.cache_key(embed.build_doc_input(c["text"])) for c in chunks])
+        print(f"{'product':36} {'chunks':>7} {'to embed':>9} {'tokens(est)':>12}")
+        for r in product_table(chunks, cached):
+            print(f"{r['product']:36} {r['chunks']:>7} {r['to_embed']:>9} {r['tokens']:>12}")
+        print(f"cached already: {len(cached)}; today {usage.used}/{config.EMBED_RPD} used")
+        return 0
     scope = scope_label(args.wave, args.area, args.product)
     if scope != "all":
-        chunks = select_chunks(chunks, args.wave, args.area, args.product)
-        print(f"scope [{scope}]: {len(chunks)} chunks from {len({c['url'] for c in chunks})} pages")
+        selected = select_chunks(chunks, args.wave, args.area, args.product)
+        print(f"scope [{scope}]: {len(selected)} chunks from {len({c['url'] for c in selected})} pages")
+        if args.no_cumulative:
+            chunks = selected
+        else:
+            cached = cache.present([embed.cache_key(embed.build_doc_input(c["text"])) for c in chunks])
+            chunks = add_cached(chunks, selected, cached)
+            print(f"cumulative: + {len(chunks) - len(selected)} chunks already in the cache -> {len(chunks)} chunks "
+                  f"from {len({c['url'] for c in chunks})} pages")
+            scope += " + cached"
     if args.limit:
         chunks = chunks[:args.limit]
         print(f"--limit: {len(chunks)} chunks")
@@ -309,7 +362,6 @@ def main(argv=None) -> int:
     longest = max((embed.estimate_tokens(t) for t in inputs), default=0)
     print(f"longest chunk ~{longest} tokens (estimate), warnings: {len(warn)}")
 
-    cache = embed.EmbedCache(config.EMBED_CACHE_PATH)
     keys = [embed.cache_key(t) for t in inputs]
     found = cache.get_many(list(set(keys)))
     plan = quota_plan(inputs, set(found), usage)

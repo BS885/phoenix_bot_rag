@@ -88,6 +88,15 @@ class EmbedCache:
                 out[key] = list(struct.unpack(f"{dim}f", blob))
         return out
 
+    def present(self, keys: list[str]) -> set[str]:
+        """Which of these keys are cached (no vectors loaded)."""
+        out: set[str] = set()
+        for i in range(0, len(keys), 500):
+            part = keys[i:i + 500]
+            marks = ",".join("?" * len(part))
+            out.update(k for (k,) in self.db.execute(f"SELECT key FROM emb WHERE key IN ({marks})", part))
+        return out
+
     def put_many(self, items: dict[str, list[float]]) -> None:
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
         self.db.executemany(

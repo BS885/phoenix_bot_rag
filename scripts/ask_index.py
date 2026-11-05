@@ -54,13 +54,14 @@ def main() -> int:
     # negatives of the sanity set: first result and its distance
     sanity_neg = json.loads((ROOT / "eval" / "sanity_cases.json").read_text(encoding="utf-8"))["negatives"]
     out += ["## Negatives (eval/sanity_cases.json): first chunk and distance", "",
-            "| query | kind | distance | first result |", "|---|---|---|---|"]
+            "| query | kind | distance | words | short | first result |", "|---|---|---|---|---|---|"]
     for n in sanity_neg:
         r = col.query(query_embeddings=[embed.embed_query(n["query"], embedder, cache)], n_results=1,
-                      include=["metadatas", "distances"])
-        md0, d0 = r["metadatas"][0][0], r["distances"][0][0]
-        out.append(f"| {n['query']} | {n['kind']} | {d0:.3f} | {md0['url'].replace(config.BASE_URL, '')} > "
-                   f"{md0['section_title'][:50]} |")
+                      include=["metadatas", "distances", "documents"])
+        md0, d0, doc0 = r["metadatas"][0][0], r["distances"][0][0], r["documents"][0][0]
+        body_words = len(doc0.split("\n", 1)[1].split()) if "\n" in doc0 else len(doc0.split())
+        out.append(f"| {n['query']} | {n['kind']} | {d0:.3f} | {body_words} | {'yes' if md0.get('short') else 'no'} | "
+                   f"{md0['url'].replace(config.BASE_URL, '')} > {md0['section_title'][:50]} |")
     out.append("")
     out.insert(2, f"top-{args.k} contains a matching page for {hits} of {positives} answerable questions "
                   f"(negatives: look at the distances).\n")
