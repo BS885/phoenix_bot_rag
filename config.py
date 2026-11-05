@@ -117,6 +117,10 @@ EMBED_TPM = 30_000              # tokens per minute (estimated with EMBED_CHARS_
 EMBED_RPD = 1_000               # texts per day (resets at midnight Pacific time)
 EMBED_QUOTA_WAIT_SEC = 65       # a per-minute 429: wait this long, retry at most EMBED_QUOTA_RETRIES times, then stop
 EMBED_QUOTA_RETRIES = 2
+EMBED_DAILY_RESERVE = 200       # --daily keeps this many texts of the day's quota free for questions
+DAILY_PRODUCT_ORDER = ("health-insurance", "life-insurance", "disability-and-incapacity-to-work", "ishtalmutfund",
+                       "car-insurance", "apartment-insurance", "travel-insurance", "gemel", "pension-savings",
+                       "savings")  # --daily embeds in this order; every other product follows
 EMBED_USAGE_PATH = ROOT / "data" / "embed_usage.json"
 EMBED_CACHE_PATH = ROOT / "data" / "embed_cache.sqlite"
 CHROMA_DIR = ROOT / "data" / "chroma_db"

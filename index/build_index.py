@@ -145,6 +145,43 @@ def product_table(chunks: list[dict], cached_keys: set[str], order=PRODUCT_ORDER
     return first + [other]
 
 
+def plan_daily(chunks: list[dict], cached_keys: set[str], budget: int, order=None) -> dict:
+    """Pick, in priority order, the chunks whose NEW texts fit in `budget` (texts for today).
+
+    Products follow config.DAILY_PRODUCT_ORDER, then the others (largest first); within a product the chunk order
+    is kept. The cut can fall in the middle of a product. Returns the chosen chunks, how many texts they need, how
+    many texts are still missing afterwards and which products are done / partly done.
+    """
+    order = list(order or config.DAILY_PRODUCT_ORDER)
+    by_product: dict[str, list[dict]] = {}
+    for c in chunks:
+        by_product.setdefault(c["product"], []).append(c)
+    rest = sorted((p for p in by_product if p not in order), key=lambda p: -len(by_product[p]))
+    chosen, new_keys, missing, status = [], set(), 0, {}
+    for product in [p for p in order if p in by_product] + rest:
+        todo_total = todo_taken = 0
+        for c in by_product[product]:
+            key = embed.cache_key(embed.build_doc_input(c["text"]))
+            if key in cached_keys or key in new_keys:
+                continue
+            todo_total += 1
+            if len(new_keys) < budget:
+                new_keys.add(key)
+                chosen.append(c)
+                todo_taken += 1
+            else:
+                missing += 1
+        if todo_total:
+            status[product] = "done" if todo_taken == todo_total else ("partial" if todo_taken else "waiting")
+    return {"chunks": chosen, "texts": len(new_keys), "missing": missing, "status": status}
+
+
+def days_left(missing: int, rpd: int | None = None, reserve: int | None = None) -> int:
+    """Whole days still needed to embed `missing` texts with the daily quota minus the reserve for questions."""
+    per_day = (rpd or config.EMBED_RPD) - (config.EMBED_DAILY_RESERVE if reserve is None else reserve)
+    return 0 if missing <= 0 else -(-missing // max(per_day, 1))
+
+
 def scope_label(wave=None, areas=None, products=None) -> str:
     parts = ([f"wave {wave}"] if wave else []) + [f"area {a}" for a in areas or []] + [f"product {p}" for p in products or []]
     return ", ".join(parts) or "all"
@@ -316,6 +353,11 @@ def main(argv=None) -> int:
     ap.add_argument("--product", action="append", help="build only this product (first URL segment); repeatable")
     ap.add_argument("--no-cumulative", action="store_true",
                     help="build ONLY the selected scope (default: the scope plus every chunk already in the cache)")
+    ap.add_argument("--daily", action="store_true",
+                    help="embed in priority order (config.DAILY_PRODUCT_ORDER) until only --reserve texts of today's "
+                         "quota are left; cumulative build; stops politely with a summary")
+    ap.add_argument("--reserve", type=int, default=config.EMBED_DAILY_RESERVE,
+                    help="--daily: texts of today's quota to leave free for questions")
     ap.add_argument("--by-product", action="store_true", help="print texts still to embed per product, then exit")
     ap.add_argument("--used-today", type=int, help="set today's used-texts counter (copy it from AI Studio)")
     args = ap.parse_args(argv)
@@ -338,8 +380,26 @@ def main(argv=None) -> int:
             print(f"{r['product']:36} {r['chunks']:>7} {r['to_embed']:>9} {r['tokens']:>12}")
         print(f"cached already: {len(cached)}; today {usage.used}/{config.EMBED_RPD} used")
         return 0
-    scope = scope_label(args.wave, args.area, args.product)
-    if scope != "all":
+    daily = None
+    if args.daily:
+        cached = cache.present([embed.cache_key(embed.build_doc_input(c["text"])) for c in chunks])
+        daily = plan_daily(chunks, cached, max(usage.remaining - args.reserve, 0))
+        print(f"--daily: {usage.used}/{config.EMBED_RPD} used today, reserve {args.reserve} -> budget "
+              f"{max(usage.remaining - args.reserve, 0)} texts; this run embeds {daily['texts']}, "
+              f"{daily['missing']} stay missing (about {days_left(daily['missing'], reserve=args.reserve)} more day(s))")
+        print("  products: " + ", ".join(f"{p} {st}" for p, st in daily["status"].items()))
+        if not daily["chunks"]:
+            print("nothing new to embed today" if daily["missing"] else "everything is already embedded")
+            if daily["missing"]:
+                return 0
+        selected = daily["chunks"]
+        chunks = add_cached(chunks, selected, cached)
+        print(f"cumulative: {len(selected)} new chunks + {len(chunks) - len(selected)} already in the cache "
+              f"-> {len(chunks)} chunks from {len({c['url'] for c in chunks})} pages")
+        scope = "daily (priority order) + cached"
+    else:
+        scope = scope_label(args.wave, args.area, args.product)
+    if scope != "all" and not args.daily:
         selected = select_chunks(chunks, args.wave, args.area, args.product)
         print(f"scope [{scope}]: {len(selected)} chunks from {len({c['url'] for c in selected})} pages")
         if args.no_cumulative:
@@ -385,12 +445,19 @@ def main(argv=None) -> int:
         print(f"embedded in this run: {stop.done}; remaining: {stop.remaining} texts. Everything finished is in the "
               f"cache ({config.EMBED_CACHE_PATH.name}); no collection was built. Run the same command again "
               f"{'tomorrow (after midnight Pacific)' if stop.daily else 'in a few minutes'} to continue.")
+        if daily is not None:
+            print(f"SUMMARY: stopped early; {stop.remaining} texts of today's plan and {daily['missing']} beyond it "
+                  f"are still missing; about {days_left(stop.remaining + daily['missing'], reserve=args.reserve)} more day(s)")
         return 3
     write_near_report(near_duplicate_report(chunks, result["vectors"]))
     print(f"built {result['collection']} [{scope}]: {len(chunks)} chunks | API calls {result['embed']['api_calls']}, "
           f"cache hits {result['embed']['hits']}, computed {result['embed']['misses']} | "
           f"removed old: {result['removed_collections']}")
     print(f"quota after the build: {usage.used}/{config.EMBED_RPD} texts used today, {usage.remaining} left")
+    if daily is not None:
+        print(f"SUMMARY: embedded {result['embed']['misses']} texts today; {daily['missing']} still missing in "
+              f"{sum(1 for st in daily['status'].values() if st != 'done')} product(s); about "
+              f"{days_left(daily['missing'], reserve=args.reserve)} more day(s) at {config.EMBED_RPD - args.reserve} texts/day")
     return 0
 
 

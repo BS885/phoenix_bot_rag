@@ -473,3 +473,48 @@ class TestCumulative(IndexTestCase):
         rows = bi.product_table(cs, {self.key(cs[2])}, order=("gemel", "health-insurance"))
         self.assertEqual([(r["product"], r["to_embed"]) for r in rows[:2]], [("gemel", 0), ("health-insurance", 1)])
         self.assertEqual((rows[-1]["to_embed"], rows[-1]["chunks"]), (1, 2))  # two identical car-insurance texts = 1 to embed
+
+
+class TestDailyPlan(IndexTestCase):
+    def chunks(self):
+        out = []
+        for product, n in (("car-insurance", 5), ("health-insurance", 4), ("life-insurance", 2), ("zzz-other", 3), ("gemel", 2)):
+            for i in range(n):
+                out.append({**make_chunk(f"https://www.fnx.co.il/{product}/{i}/", "נושא", f"גוף {product} {i}", n=i),
+                            "product": product})
+        return out
+
+    def key(self, c):
+        return embed.cache_key(embed.build_doc_input(c["text"]))
+
+    def test_priority_order_then_the_rest(self):
+        plan = bi.plan_daily(self.chunks(), set(), budget=100)
+        self.assertEqual([p for p in dict.fromkeys(c["product"] for c in plan["chunks"])],
+                         ["health-insurance", "life-insurance", "car-insurance", "gemel", "zzz-other"])
+        self.assertEqual((plan["texts"], plan["missing"]), (16, 0))
+        self.assertTrue(all(s == "done" for s in plan["status"].values()))
+
+    def test_budget_cuts_inside_a_product_and_reports_the_rest(self):
+        plan = bi.plan_daily(self.chunks(), set(), budget=8)       # health 4 + life 2 + 2 of car (5)
+        self.assertEqual(plan["texts"], 8)
+        self.assertEqual(plan["missing"], 8)                       # 3 car + 2 gemel + 3 other
+        self.assertEqual((plan["status"]["health-insurance"], plan["status"]["car-insurance"],
+                          plan["status"]["gemel"]), ("done", "partial", "waiting"))
+
+    def test_cached_texts_cost_nothing(self):
+        cs = self.chunks()
+        cached = {self.key(c) for c in cs if c["product"] in ("health-insurance", "life-insurance")}
+        plan = bi.plan_daily(cs, cached, budget=3)
+        self.assertEqual({c["product"] for c in plan["chunks"]}, {"car-insurance"})
+        self.assertEqual((plan["texts"], plan["missing"]), (3, 7))
+        self.assertNotIn("health-insurance", plan["status"])       # nothing left to do there
+
+    def test_zero_budget_embeds_nothing(self):
+        plan = bi.plan_daily(self.chunks(), set(), budget=0)
+        self.assertEqual((plan["chunks"], plan["texts"], plan["missing"]), ([], 0, 16))
+
+    def test_days_left_uses_the_quota_minus_the_reserve(self):
+        self.assertEqual(bi.days_left(0), 0)
+        self.assertEqual(bi.days_left(800), 1)        # 1000 - 200 = 800 per day
+        self.assertEqual(bi.days_left(801), 2)
+        self.assertEqual(bi.days_left(4574), 6)
