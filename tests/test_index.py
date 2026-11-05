@@ -72,6 +72,24 @@ class TestCacheAndBatching(IndexTestCase):
         self.assertEqual((s2["misses"], s2["hits"], s2["api_calls"]), (0, 5, 0))
         self.assertEqual(len(e.calls), 1)
 
+    def test_progress_is_reported_and_a_failed_run_resumes_from_cache(self):
+        texts = [f"טקסט {i}" for i in range(40)]
+        seen = []
+
+        class Failing(FakeEmbedder):
+            def embed(self, texts_):
+                if len(self.calls) == 2:
+                    raise RuntimeError("quota")
+                return super().embed(texts_)
+
+        with self.assertRaises(RuntimeError):
+            embed.embed_inputs(texts, Failing(), self.cache, progress=lambda *a: seen.append(a))
+        self.assertEqual([a[2] for a in seen], [1, 2])  # progress per finished batch
+        e = FakeEmbedder()
+        _, stats = embed.embed_inputs(texts, e, self.cache)
+        self.assertEqual(stats["hits"], seen[-1][0])   # what was finished is not sent again
+        self.assertEqual(stats["hits"] + stats["misses"], 40)
+
     def test_duplicate_inputs_sent_once_and_order_kept(self):
         e = FakeEmbedder()
         vecs, stats = embed.embed_inputs(["א", "ב", "א"], e, self.cache)
@@ -107,18 +125,45 @@ class TestCacheAndBatching(IndexTestCase):
         with self.assertRaises(embed.EmbeddingError):
             embed.embed_inputs(["א"], WrongDim(), self.cache)
 
-    def test_retry_backoff_on_429_then_success(self):
+    def test_retry_backoff_on_5xx_then_success(self):
         class Err(Exception):
-            code = 429
+            code = 503
         calls, waits = [], []
 
         def flaky():
             calls.append(1)
             if len(calls) < 3:
-                raise Err("RESOURCE_EXHAUSTED")
+                raise Err("UNAVAILABLE")
             return "ok"
         self.assertEqual(embed.with_retries(flaky, sleep=waits.append), "ok")
         self.assertEqual(waits, [config.EMBED_BACKOFF_SEC, config.EMBED_BACKOFF_SEC * 2])
+
+    def test_per_minute_429_waits_then_stops_without_a_loop(self):
+        class Err(Exception):
+            code = 429
+        calls, waits = [], []
+
+        def always():
+            calls.append(1)
+            raise Err("RESOURCE_EXHAUSTED: quota exceeded for metric requests per minute")
+        with self.assertRaises(embed.QuotaStop) as cm:
+            embed.with_retries(always, sleep=waits.append)
+        self.assertFalse(cm.exception.daily)
+        self.assertEqual(waits, [config.EMBED_QUOTA_WAIT_SEC] * config.EMBED_QUOTA_RETRIES)
+        self.assertEqual(len(calls), config.EMBED_QUOTA_RETRIES + 1)
+
+    def test_daily_429_stops_at_once(self):
+        class Err(Exception):
+            code = 429
+        calls, waits = [], []
+
+        def daily():
+            calls.append(1)
+            raise Err("RESOURCE_EXHAUSTED: EmbedContentRequestsPerDay quota exceeded")
+        with self.assertRaises(embed.QuotaStop) as cm:
+            embed.with_retries(daily, sleep=waits.append)
+        self.assertTrue(cm.exception.daily)
+        self.assertEqual((len(calls), waits), (1, []))
 
     def test_non_retryable_error_not_retried(self):
         class Err(Exception):
@@ -137,6 +182,59 @@ class TestCacheAndBatching(IndexTestCase):
             code = 503
         with self.assertRaises(embed.EmbeddingError):
             embed.with_retries(lambda: (_ for _ in ()).throw(Err("x")), sleep=lambda s: None)
+
+
+class TestQuota(IndexTestCase):
+    def test_rate_limiter_waits_for_texts_per_minute(self):
+        now, slept = [0.0], []
+        lim = embed.RateLimiter(rpm=100, tpm=10**9, clock=lambda: now[0],
+                                sleep=lambda d: (slept.append(d), now.__setitem__(0, now[0] + d)))
+        for _ in range(6):
+            lim.acquire(16, 100)          # 96 texts fit in the first minute
+        self.assertEqual(slept, [])
+        lim.acquire(16, 100)              # would be 112 > 100: waits until the first event leaves the window
+        self.assertEqual(len(slept), 1)
+        self.assertGreaterEqual(slept[0], 60)
+
+    def test_rate_limiter_waits_for_tokens_per_minute(self):
+        now, slept = [0.0], []
+        lim = embed.RateLimiter(rpm=1000, tpm=30_000, clock=lambda: now[0],
+                                sleep=lambda d: (slept.append(d), now.__setitem__(0, now[0] + d)))
+        lim.acquire(1, 20_000)
+        lim.acquire(1, 9_000)
+        self.assertEqual(slept, [])
+        lim.acquire(1, 5_000)             # 34,000 > 30,000
+        self.assertEqual(len(slept), 1)
+
+    def test_request_larger_than_the_quota_is_refused(self):
+        with self.assertRaises(embed.EmbeddingError):
+            embed.RateLimiter(rpm=100, tpm=30_000).acquire(101, 10)
+
+    def test_daily_usage_persists_and_resets_on_a_new_day(self):
+        path = self.tmp / "u.json"
+        u = embed.DailyUsage(path, limit=1000, today="2026-11-05")
+        u.set_used(152)
+        u.add(8)
+        self.assertEqual(embed.DailyUsage(path, limit=1000, today="2026-11-05").used, 160)
+        self.assertEqual(embed.DailyUsage(path, limit=1000, today="2026-11-06").used, 0)
+        self.assertEqual(embed.DailyUsage(path, limit=1000, today="2026-11-05").remaining, 840)
+
+    def test_stops_at_the_daily_limit_and_keeps_what_was_done(self):
+        path = Path(tempfile.mkdtemp()) / "u.json"
+        usage = embed.DailyUsage(path, limit=40, today="d")
+        inner = FakeEmbedder()
+        th = embed.ThrottledEmbedder(inner, embed.RateLimiter(rpm=1000, tpm=10**9), usage)
+        texts = [f"טקסט {i}" for i in range(100)]
+        with self.assertRaises(embed.QuotaStop) as cm:
+            embed.embed_inputs(texts, th, self.cache)
+        self.assertTrue(cm.exception.daily)
+        self.assertEqual((cm.exception.done, cm.exception.remaining), (32, 68))  # two batches of 16 fit in 40
+        self.assertEqual(usage.used, 32)
+        # tomorrow: only what is missing is sent
+        th2 = embed.ThrottledEmbedder(FakeEmbedder(), embed.RateLimiter(rpm=1000, tpm=10**9),
+                                      embed.DailyUsage(path, limit=1000, today="d2"))
+        _, stats = embed.embed_inputs(texts, th2, self.cache)
+        self.assertEqual((stats["hits"], stats["misses"]), (32, 68))
 
 
 class TestDedupe(IndexTestCase):
@@ -317,3 +415,25 @@ class TestNearDuplicates(IndexTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestScope(unittest.TestCase):
+    CH = [{"area": "claims", "product": "claims-customer-service"}, {"area": "customer-service", "product": "customer-service"},
+          {"area": "product", "product": "car-insurance"}, {"area": "product", "product": "gemel"}]
+
+    def test_wave_a_is_claims_and_customer_service(self):
+        self.assertEqual([c["product"] for c in bi.select_chunks(self.CH, wave="A")],
+                         ["claims-customer-service", "customer-service"])
+
+    def test_wave_by_segments_and_product_filter(self):
+        self.assertEqual([c["product"] for c in bi.select_chunks(self.CH, wave="B")], ["car-insurance"])
+        self.assertEqual([c["product"] for c in bi.select_chunks(self.CH, products=["gemel"])], ["gemel"])
+        self.assertEqual(len(bi.select_chunks(self.CH)), 4)
+
+    def test_quota_plan_counts_only_uncached_distinct_texts(self):
+        usage = embed.DailyUsage(Path(tempfile.mkdtemp()) / "u.json", limit=10, today="d")
+        usage.set_used(8)
+        inputs = ["א", "ב", "ב", "ג"]
+        plan = bi.quota_plan(inputs, {embed.cache_key("א")}, usage)
+        self.assertEqual((plan["texts"], plan["remaining_today"], plan["fits_today"]), (2, 2, True))
+        self.assertFalse(bi.quota_plan(inputs, set(), usage)["fits_today"])

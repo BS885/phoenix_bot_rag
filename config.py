@@ -92,7 +92,7 @@ PRODUCT_NAMES = {
     "savings": "חיסכון והשקעות",
     "alternativeinvestments": "השקעות אלטרנטיביות",
     "loans": "הלוואות",
-    "takanottashlum": "תקנות התשלומים (מעסיקים)",
+    "takanottashlum": "מידע למעסיקים (דיווח והפקדות)",
     "claims-customer-service": "תביעות ושירות לקוחות",
     "customer-service": "שירות לקוחות",
 }
@@ -111,6 +111,13 @@ EMBED_TOKEN_WARN_RATIO = 0.9    # warn when a text is estimated above this share
 EMBED_RETRIES = 5
 EMBED_BACKOFF_SEC = 2.0         # doubles on every retry (429 / 5xx)
 EMBED_MIN_INTERVAL_SEC = 1.0    # minimum gap between API calls; free-tier quota not documented: check AI Studio
+# Free-tier quota for gemini-embedding-2 (read from AI Studio by the owner): counted PER TEXT, not per request.
+EMBED_RPM = 100                 # texts per minute
+EMBED_TPM = 30_000              # tokens per minute (estimated with EMBED_CHARS_PER_TOKEN, i.e. conservatively)
+EMBED_RPD = 1_000               # texts per day (resets at midnight Pacific time)
+EMBED_QUOTA_WAIT_SEC = 65       # a per-minute 429: wait this long, retry at most EMBED_QUOTA_RETRIES times, then stop
+EMBED_QUOTA_RETRIES = 2
+EMBED_USAGE_PATH = ROOT / "data" / "embed_usage.json"
 EMBED_CACHE_PATH = ROOT / "data" / "embed_cache.sqlite"
 CHROMA_DIR = ROOT / "data" / "chroma_db"
 COLLECTION_PREFIX = "chunks"

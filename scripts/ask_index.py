@@ -26,7 +26,7 @@ def main() -> int:
 
     questions = json.loads(QUESTIONS.read_text(encoding="utf-8"))["questions"]
     col = bi.get_active_collection()  # stops here if the index and config disagree
-    embedder = embed.GeminiEmbedder()
+    embedder = embed.make_embedder()
     cache = embed.EmbedCache(config.EMBED_CACHE_PATH)
     out = [f"# Smoke questions, top-{args.k} on collection `{col.name}` ({col.count()} chunks)", ""]
     hits = positives = 0
@@ -51,13 +51,24 @@ def main() -> int:
             out.append(f"NEGATIVE: first result is {md0['url'].replace(config.BASE_URL, '')} | "
                        f"{md0['section_title'][:60]} at distance {d0:.3f}")
         out.append("")
+    # negatives of the sanity set: first result and its distance
+    sanity_neg = json.loads((ROOT / "eval" / "sanity_cases.json").read_text(encoding="utf-8"))["negatives"]
+    out += ["## Negatives (eval/sanity_cases.json): first chunk and distance", "",
+            "| query | kind | distance | first result |", "|---|---|---|---|"]
+    for n in sanity_neg:
+        r = col.query(query_embeddings=[embed.embed_query(n["query"], embedder, cache)], n_results=1,
+                      include=["metadatas", "distances"])
+        md0, d0 = r["metadatas"][0][0], r["distances"][0][0]
+        out.append(f"| {n['query']} | {n['kind']} | {d0:.3f} | {md0['url'].replace(config.BASE_URL, '')} > "
+                   f"{md0['section_title'][:50]} |")
+    out.append("")
     out.insert(2, f"top-{args.k} contains a matching page for {hits} of {positives} answerable questions "
                   f"(negatives: look at the distances).\n")
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     (config.LOG_DIR / "smoke_top3.md").write_text("\n".join(out) + "\n", encoding="utf-8")
     print("\n".join(out[:3]))
     for line in out:
-        if line.startswith("## ") or line.startswith("1. "):
+        if line.startswith("## ") or line.startswith("1. ") or line.startswith("| ") and "NEGATIVE" not in line:
             print(line[:150])
     return 0
 

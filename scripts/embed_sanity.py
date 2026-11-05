@@ -78,7 +78,7 @@ def main() -> int:
     sample = pick_sample(chunks, required, args.sample)
     docs = [embed.build_doc_input(chunks[i]["text"]) for i in sample]
 
-    embedder = embed.GeminiEmbedder()
+    embedder = embed.make_embedder()
     cache = embed.EmbedCache(config.EMBED_CACHE_PATH)
 
     # 0. batch consistency (direct API calls, no cache)

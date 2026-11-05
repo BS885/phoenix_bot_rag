@@ -4,6 +4,7 @@ The embedder is injected (anything with .embed(list[str]) -> list[list[float]]),
 here is testable without the network.
 """
 import hashlib
+import json
 import math
 import os
 import sqlite3
@@ -16,6 +17,16 @@ import config
 
 class EmbeddingError(Exception):
     pass
+
+
+class QuotaStop(EmbeddingError):
+    """The quota is used up (daily) or keeps failing (per-minute): stop in an orderly way, the cache keeps the rest."""
+
+    def __init__(self, message: str, daily: bool):
+        super().__init__(message)
+        self.daily = daily
+        self.done = 0        # filled in by embed_inputs: texts embedded in this run
+        self.remaining = 0   # texts still to embed
 
 
 # ---------- text to embed ----------
@@ -100,27 +111,153 @@ def get_api_key() -> str:
     return key
 
 
+def is_quota_error(exc: Exception) -> bool:
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    return code == 429 or "RESOURCE_EXHAUSTED" in str(exc) or "429" in str(exc)
+
+
+def is_daily_quota(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(k in text for k in ("perday", "per day", "per_day", "daily"))
+
+
 def is_retryable(exc: Exception) -> bool:
     code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
     if code in (429, 500, 502, 503, 504):
         return True
     text = str(exc)
-    return any(s in text for s in ("RESOURCE_EXHAUSTED", "UNAVAILABLE", "429", "503", "timed out"))
+    return any(k in text for k in ("RESOURCE_EXHAUSTED", "UNAVAILABLE", "429", "503", "timed out"))
 
 
 def with_retries(fn, sleep=time.sleep):
-    """Call fn(); on 429/5xx wait with exponential backoff, up to EMBED_RETRIES attempts."""
-    last = None
-    for attempt in range(config.EMBED_RETRIES):
+    """Call fn(). 5xx: exponential backoff, up to EMBED_RETRIES attempts. 429: NEVER a retry loop.
+
+    A daily 429 stops at once (QuotaStop). A per-minute 429 waits EMBED_QUOTA_WAIT_SEC and retries at most
+    EMBED_QUOTA_RETRIES times, then stops.
+    """
+    last, quota_waits, attempt = None, 0, 0
+    while attempt < config.EMBED_RETRIES:
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001  (SDK exception types vary by version)
+            if isinstance(exc, QuotaStop):
+                raise
+            if is_quota_error(exc):
+                if is_daily_quota(exc):
+                    raise QuotaStop(f"daily quota reached: {str(exc)[:200]}", daily=True) from exc
+                if quota_waits >= config.EMBED_QUOTA_RETRIES:
+                    raise QuotaStop(f"per-minute quota still exceeded after {quota_waits} waits: {str(exc)[:200]}",
+                                    daily=False) from exc
+                quota_waits += 1
+                sleep(config.EMBED_QUOTA_WAIT_SEC)
+                continue
             if not is_retryable(exc):
                 raise
             last = exc
-            if attempt < config.EMBED_RETRIES - 1:
-                sleep(config.EMBED_BACKOFF_SEC * (2 ** attempt))
+            attempt += 1
+            if attempt < config.EMBED_RETRIES:
+                sleep(config.EMBED_BACKOFF_SEC * (2 ** (attempt - 1)))
     raise EmbeddingError(f"gave up after {config.EMBED_RETRIES} attempts: {last}")
+
+
+# ---------- quota: per-minute window (texts + tokens) and per-day count ----------
+
+class RateLimiter:
+    """Sliding 60-second window over texts and estimated tokens. acquire() sleeps until the request fits."""
+
+    def __init__(self, rpm: int | None = None, tpm: int | None = None, clock=time.monotonic, sleep=time.sleep,
+                 on_wait=None):
+        self.rpm, self.tpm = rpm or config.EMBED_RPM, tpm or config.EMBED_TPM
+        self.clock, self.sleep, self.on_wait = clock, sleep, on_wait
+        self.events: list[tuple[float, int, int]] = []
+
+    def acquire(self, texts: int, tokens: int) -> float:
+        """Wait until `texts` and `tokens` fit in the last minute, then record them. Returns seconds waited."""
+        if texts > self.rpm or tokens > self.tpm:
+            raise EmbeddingError(f"one request ({texts} texts, ~{tokens} tokens) exceeds the per-minute quota "
+                                 f"({self.rpm} texts, {self.tpm} tokens)")
+        waited = 0.0
+        while True:
+            now = self.clock()
+            self.events = [e for e in self.events if now - e[0] < 60]
+            if (sum(e[1] for e in self.events) + texts <= self.rpm
+                    and sum(e[2] for e in self.events) + tokens <= self.tpm):
+                self.events.append((now, texts, tokens))
+                return waited
+            delay = max(60 - (now - self.events[0][0]), 0) + 0.5
+            if self.on_wait:
+                self.on_wait(delay)
+            self.sleep(delay)
+            waited += delay
+
+
+class DailyUsage:
+    """Texts sent to the API today (Pacific date, when Google resets the daily quota). Persisted in a json file."""
+
+    def __init__(self, path: Path | str | None = None, limit: int | None = None, today: str | None = None):
+        self.path = Path(path or config.EMBED_USAGE_PATH)
+        self.limit = limit or config.EMBED_RPD
+        self.today = today or self.pacific_date()
+        self.used = 0
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            if data.get("date") == self.today:
+                self.used = int(data.get("texts", 0))
+        except (OSError, ValueError):
+            pass
+
+    @staticmethod
+    def pacific_date() -> str:
+        from datetime import datetime, timedelta, timezone
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
+        except Exception:  # noqa: BLE001  (no tz database on this machine)
+            return (datetime.now(timezone.utc) - timedelta(hours=8)).strftime("%Y-%m-%d")
+
+    @property
+    def remaining(self) -> int:
+        return max(self.limit - self.used, 0)
+
+    def set_used(self, n: int) -> None:
+        self.used = n
+        self._save()
+
+    def add(self, n: int) -> None:
+        self.used += n
+        self._save()
+
+    def _save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"date": self.today, "texts": self.used, "limit": self.limit}), encoding="utf-8")
+        tmp.replace(self.path)
+
+
+class ThrottledEmbedder:
+    """Wraps an embedder: per-minute limits by texts and tokens, a stop at the daily limit, usage persisted."""
+
+    def __init__(self, inner, limiter: RateLimiter, usage: DailyUsage):
+        self.inner, self.limiter, self.usage = inner, limiter, usage
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if len(texts) > self.usage.remaining:
+            raise QuotaStop(f"daily limit: {self.usage.used}/{self.usage.limit} texts used today, "
+                            f"{len(texts)} more requested", daily=True)
+        self.limiter.acquire(len(texts), sum(estimate_tokens(t) for t in texts))
+        try:
+            vectors = self.inner.embed(texts)
+        except QuotaStop as exc:
+            if exc.daily:
+                self.usage.set_used(self.usage.limit)
+            raise
+        self.usage.add(len(texts))
+        return vectors
+
+
+def make_embedder(on_wait=None) -> ThrottledEmbedder:
+    """The embedder every script should use: Gemini + quota limits."""
+    return ThrottledEmbedder(GeminiEmbedder(), RateLimiter(on_wait=on_wait), DailyUsage())
 
 
 class GeminiEmbedder:
@@ -169,10 +306,12 @@ def make_batches(inputs: list[str]) -> list[list[int]]:
 
 
 def embed_inputs(inputs: list[str], embedder, cache: EmbedCache | None,
-                 sleep=time.sleep, clock=time.monotonic) -> tuple[list[list[float]], dict]:
+                 sleep=time.sleep, clock=time.monotonic, progress=None) -> tuple[list[list[float]], dict]:
     """Vectors in input order. Cached inputs never reach the API.
 
     stats: inputs, unique, hits, misses, api_calls.
+    Every batch is written to the cache right after its API call, so a stopped / failed run resumes from the
+    cache on the next run. progress(done_texts, total_texts, api_calls) is called after each batch.
     """
     keys = [cache_key(t) for t in inputs]
     found = cache.get_many(list(set(keys))) if cache else {}
@@ -181,13 +320,19 @@ def embed_inputs(inputs: list[str], embedder, cache: EmbedCache | None,
     todo = [i for i in todo if not (keys[i] in seen_keys or seen_keys.add(keys[i]))]  # one call per distinct text
     api_calls, last_call = 0, None
     todo_texts = [inputs[i] for i in todo]
+    finished: list[int] = []
     for batch in make_batches(todo_texts):
         if last_call is not None:
             wait = config.EMBED_MIN_INTERVAL_SEC - (clock() - last_call)
             if wait > 0:
                 sleep(wait)
         texts = [todo_texts[j] for j in batch]
-        vectors = embedder.embed(texts)
+        try:
+            vectors = embedder.embed(texts)
+        except QuotaStop as stop:  # everything finished so far is already in the cache
+            stop.done = len(finished)
+            stop.remaining = len(todo) - stop.done
+            raise
         last_call = clock()
         if len(vectors) != len(texts):  # e.g. several inputs aggregated into one vector
             raise EmbeddingError(f"asked for {len(texts)} embeddings, got {len(vectors)}")
@@ -197,8 +342,11 @@ def embed_inputs(inputs: list[str], embedder, cache: EmbedCache | None,
         # same precision as the cache (float32), so a first run and a cached run give identical vectors
         new = {keys[todo[j]]: _as_float32(v) for j, v in zip(batch, vectors)}
         found.update(new)
+        finished.extend(batch)
         if cache:
             cache.put_many(new)
+        if progress:
+            progress(sum(1 for i in todo if keys[i] in found), len(todo), api_calls)
     stats = {"inputs": len(inputs), "unique": len(set(keys)), "misses": len(todo),
              "hits": len(set(keys)) - len(todo), "api_calls": api_calls}
     return [found[k] for k in keys], stats

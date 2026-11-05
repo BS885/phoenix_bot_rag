@@ -93,6 +93,29 @@ def dedupe_across_pages(chunks: list[dict]) -> tuple[list[dict], dict]:
                  "groups_with_dups": sum(1 for m in groups.values() if len(m) > 1)}
 
 
+# ---------- scope (build only some of the chunks) ----------
+
+def select_chunks(chunks: list[dict], wave: str | None = None, areas=None, products=None) -> list[dict]:
+    """Keep chunks of a wave (config.WAVES) and/or of the given areas / products (first URL segment).
+
+    Applied AFTER the cross-page dedupe, so every chunk keeps exactly the id, text and metadata it will have in
+    the full index: a later, wider build finds these vectors in the cache and only embeds what is new.
+    """
+    areas, products = set(areas or []), set(products or [])
+    if wave:
+        spec = config.WAVES[wave]
+        areas |= set(spec.get("areas", ()))
+        products |= set(spec.get("segments", ()))
+    if not areas and not products:
+        return chunks
+    return [c for c in chunks if c["area"] in areas or c["product"] in products]
+
+
+def scope_label(wave=None, areas=None, products=None) -> str:
+    parts = ([f"wave {wave}"] if wave else []) + [f"area {a}" for a in areas or []] + [f"product {p}" for p in products or []]
+    return ", ".join(parts) or "all"
+
+
 # ---------- collection ----------
 
 def collection_meta() -> dict:
@@ -116,10 +139,10 @@ def get_client(path=None):
     return chromadb.PersistentClient(path=str(path or config.CHROMA_DIR))
 
 
-def build_collection(client, name: str, chunks: list[dict], vectors: list[list[float]]):
+def build_collection(client, name: str, chunks: list[dict], vectors: list[list[float]], scope: str = "all"):
     col = client.create_collection(
         name, configuration={"hnsw": {"space": "cosine"}},
-        metadata={**collection_meta(), "built_at": time.strftime("%Y-%m-%dT%H:%M:%S")},
+        metadata={**collection_meta(), "scope": scope, "built_at": time.strftime("%Y-%m-%dT%H:%M:%S")},
         embedding_function=None)  # vectors are always supplied: never let Chroma download its own model
     for i in range(0, len(chunks), 100):
         part = slice(i, i + 100)
@@ -216,13 +239,17 @@ def write_near_report(pairs) -> None:
 
 # ---------- main ----------
 
-def build(chunks: list[dict], embedder, cache, client, sleep=time.sleep) -> dict:
+def build(chunks: list[dict], embedder, cache, client, sleep=time.sleep, scope: str = "all") -> dict:
     """Embed, build a new collection, verify it, activate it, prune old ones. Returns a summary."""
     inputs = [embed.build_doc_input(c["text"]) for c in chunks]
-    vectors, stats = embed.embed_inputs(inputs, embedder, cache, sleep=sleep)
+    def progress(done, total, calls):
+        if calls == 1 or calls % 10 == 0 or done >= total:
+            print(f"  embedded {done}/{total} texts ({calls} API calls); saved to cache, a rerun resumes from here", flush=True)
+
+    vectors, stats = embed.embed_inputs(inputs, embedder, cache, sleep=sleep, progress=progress)
     name = f"{config.COLLECTION_PREFIX}_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"  # sorts chronologically
     try:
-        col = build_collection(client, name, chunks, vectors)
+        col = build_collection(client, name, chunks, vectors, scope)
         verify_collection(col, len(chunks))
     except Exception:
         try:
@@ -230,17 +257,35 @@ def build(chunks: list[dict], embedder, cache, client, sleep=time.sleep) -> dict
         except Exception:  # noqa: BLE001
             pass
         raise
-    activate(name, {"chunks": len(chunks), "pages": len({c["url"] for c in chunks}),
+    activate(name, {"chunks": len(chunks), "pages": len({c["url"] for c in chunks}), "scope": scope,
                     "built_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
     removed = prune_old(client, name)
     return {"collection": name, "embed": stats, "removed_collections": removed, "vectors": vectors}
+
+
+def quota_plan(inputs: list[str], found_keys: set[str], usage) -> dict:
+    """Texts / tokens still to embed for these inputs, against what is left of today's quota."""
+    todo = list({embed.cache_key(t): t for t in inputs if embed.cache_key(t) not in found_keys}.values())
+    tokens = sum(embed.estimate_tokens(t) for t in todo)
+    return {"texts": len(todo), "tokens": tokens, "calls": len(embed.make_batches(todo)),
+            "used_today": usage.used, "remaining_today": usage.remaining,
+            "minutes": max(len(todo) / config.EMBED_RPM, tokens / config.EMBED_TPM),
+            "fits_today": len(todo) <= usage.remaining}
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="no API calls, nothing written")
     ap.add_argument("--limit", type=int, help="use only the first N chunks")
+    ap.add_argument("--wave", choices=sorted(config.WAVES), help="build only the chunks of this wave (config.WAVES)")
+    ap.add_argument("--area", action="append", help="build only this area (claims / customer-service / product); repeatable")
+    ap.add_argument("--product", action="append", help="build only this product (first URL segment); repeatable")
+    ap.add_argument("--used-today", type=int, help="set today's used-texts counter (copy it from AI Studio)")
     args = ap.parse_args(argv)
+
+    usage = embed.DailyUsage()
+    if args.used_today is not None:
+        usage.set_used(args.used_today)
 
     chunks, rep = load_chunks()
     print(f"pages: {rep['pages']} (gone: {rep['gone']}, empty: {rep['empty']}, missing file: {rep['missing_file']}, "
@@ -248,6 +293,10 @@ def main(argv=None) -> int:
     chunks, dd = dedupe_across_pages(chunks)
     print(f"chunks: {dd['before']} -> {dd['after']} after merging identical text across pages "
           f"({dd['groups_with_dups']} groups, {dd['merged_away']} removed)")
+    scope = scope_label(args.wave, args.area, args.product)
+    if scope != "all":
+        chunks = select_chunks(chunks, args.wave, args.area, args.product)
+        print(f"scope [{scope}]: {len(chunks)} chunks from {len({c['url'] for c in chunks})} pages")
     if args.limit:
         chunks = chunks[:args.limit]
         print(f"--limit: {len(chunks)} chunks")
@@ -263,18 +312,33 @@ def main(argv=None) -> int:
     cache = embed.EmbedCache(config.EMBED_CACHE_PATH)
     keys = [embed.cache_key(t) for t in inputs]
     found = cache.get_many(list(set(keys)))
-    distinct_uncached = list({k: t for t, k in zip(inputs, keys) if k not in found}.values())
-    calls = len(embed.make_batches(distinct_uncached))
-    print(f"embeddings: {len(set(keys))} distinct texts, {len(found)} cached, "
-          f"{len(distinct_uncached)} to compute (~{calls} API calls)")
+    plan = quota_plan(inputs, set(found), usage)
+    print(f"embeddings: {len(set(keys))} distinct texts, {len(found)} cached, {plan['texts']} to compute "
+          f"(~{plan['tokens']} tokens est., ~{plan['calls']} API calls)")
+    print(f"quota: {plan['used_today']}/{config.EMBED_RPD} texts used today, {plan['remaining_today']} left; "
+          f"limits {config.EMBED_RPM} texts/min, {config.EMBED_TPM} tokens/min -> about {plan['minutes']:.1f} min; "
+          f"{'FITS today' if plan['fits_today'] else 'DOES NOT FIT today: stops at the limit, resumes tomorrow'}")
     if args.dry_run:
         return 0
 
-    result = build(chunks, embed.GeminiEmbedder(), cache, get_client())
+    def waiting(delay):
+        print(f"  rate limit: waiting {delay:.0f}s", flush=True)
+
+    embedder = embed.ThrottledEmbedder(embed.GeminiEmbedder(), embed.RateLimiter(on_wait=waiting), usage)
+    try:
+        result = build(chunks, embedder, cache, get_client(), scope=scope)
+    except embed.QuotaStop as stop:
+        kind = "daily" if stop.daily else "per-minute"
+        print(f"STOPPED ({kind} quota): {stop}")
+        print(f"embedded in this run: {stop.done}; remaining: {stop.remaining} texts. Everything finished is in the "
+              f"cache ({config.EMBED_CACHE_PATH.name}); no collection was built. Run the same command again "
+              f"{'tomorrow (after midnight Pacific)' if stop.daily else 'in a few minutes'} to continue.")
+        return 3
     write_near_report(near_duplicate_report(chunks, result["vectors"]))
-    print(f"built {result['collection']}: {len(chunks)} chunks | API calls {result['embed']['api_calls']}, "
+    print(f"built {result['collection']} [{scope}]: {len(chunks)} chunks | API calls {result['embed']['api_calls']}, "
           f"cache hits {result['embed']['hits']}, computed {result['embed']['misses']} | "
           f"removed old: {result['removed_collections']}")
+    print(f"quota after the build: {usage.used}/{config.EMBED_RPD} texts used today, {usage.remaining} left")
     return 0
 
 
