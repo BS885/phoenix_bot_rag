@@ -237,6 +237,31 @@ class TestQuota(IndexTestCase):
         self.assertEqual((stats["hits"], stats["misses"]), (32, 68))
 
 
+class TestRetriesAreThrottled(unittest.TestCase):
+    def test_effective_limits_are_80_percent(self):
+        self.assertEqual((config.EMBED_RPM, config.EMBED_TPM), (80, 24_000))
+        self.assertLessEqual(config.LLM_RPM, config.LLM_RPM_LIMIT * 0.8)
+
+    def test_every_attempt_passes_the_limiter_not_only_the_first(self):
+        class Flaky:
+            gate = None
+            calls = 0
+
+            def embed(self, texts):
+                for attempt in range(3):          # like with_retries: two failures, then success
+                    self.gate()
+                    self.calls += 1
+                return [[0.0]] * len(texts)
+
+        now = [0.0]
+        lim = embed.RateLimiter(rpm=100, tpm=10**9, clock=lambda: now[0], sleep=lambda s: now.__setitem__(0, now[0] + s))
+        path = Path(tempfile.mkdtemp()) / "u.json"
+        th = embed.ThrottledEmbedder(Flaky(), lim, embed.DailyUsage(path, limit=1000, today="d"))
+        th.embed(["x"] * 40)                      # 3 attempts x 40 texts = 120 > 100: must wait for the window
+        self.assertGreater(now[0], 0)
+        self.assertLessEqual(sum(e[1] for e in lim.events), 100)
+
+
 class TestDedupe(IndexTestCase):
     def test_identical_text_on_two_pages_merged_primary_by_area(self):
         body = "שלב ראשון ושלב שני"
@@ -514,7 +539,8 @@ class TestDailyPlan(IndexTestCase):
         self.assertEqual((plan["chunks"], plan["texts"], plan["missing"]), ([], 0, 16))
 
     def test_days_left_uses_the_quota_minus_the_reserve(self):
-        self.assertEqual(bi.days_left(0), 0)
-        self.assertEqual(bi.days_left(800), 1)        # 1000 - 200 = 800 per day
-        self.assertEqual(bi.days_left(801), 2)
-        self.assertEqual(bi.days_left(4574), 6)
+        self.assertEqual(bi.days_left(0, reserve=200), 0)
+        self.assertEqual(bi.days_left(800, reserve=200), 1)        # 1000 - 200 = 800 per day
+        self.assertEqual(bi.days_left(801, reserve=200), 2)
+        self.assertEqual(bi.days_left(700), 1)               # development default: 1000 - 300 = 700
+        self.assertEqual(bi.days_left(4574, reserve=200), 6)

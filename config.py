@@ -112,12 +112,15 @@ EMBED_RETRIES = 5
 EMBED_BACKOFF_SEC = 2.0         # doubles on every retry (429 / 5xx)
 EMBED_MIN_INTERVAL_SEC = 1.0    # minimum gap between API calls; free-tier quota not documented: check AI Studio
 # Free-tier quota for gemini-embedding-2 (read from AI Studio by the owner): counted PER TEXT, not per request.
-EMBED_RPM = 100                 # texts per minute
-EMBED_TPM = 30_000              # tokens per minute (estimated with EMBED_CHARS_PER_TOKEN, i.e. conservatively)
+RATE_SAFETY = 0.8               # the limiter works at this share of the real per-minute limits (RPM and TPM)
+EMBED_RPM_LIMIT = 100           # real limit: texts per minute
+EMBED_TPM_LIMIT = 30_000        # real limit: tokens per minute (estimated with EMBED_CHARS_PER_TOKEN)
+EMBED_RPM = int(EMBED_RPM_LIMIT * RATE_SAFETY)   # effective: 80
+EMBED_TPM = int(EMBED_TPM_LIMIT * RATE_SAFETY)   # effective: 24,000
 EMBED_RPD = 1_000               # texts per day (resets at midnight Pacific time)
 EMBED_QUOTA_WAIT_SEC = 65       # a per-minute 429: wait this long, retry at most EMBED_QUOTA_RETRIES times, then stop
 EMBED_QUOTA_RETRIES = 2
-EMBED_DAILY_RESERVE = 200       # --daily keeps this many texts of the day's quota free for questions
+EMBED_DAILY_RESERVE = 300       # --daily keeps this many texts of the day's quota free for questions (development days)
 DAILY_PRODUCT_ORDER = ("health-insurance", "life-insurance", "disability-and-incapacity-to-work", "ishtalmutfund",
                        "car-insurance", "apartment-insurance", "travel-insurance", "gemel", "pension-savings",
                        "savings")  # --daily embeds in this order; every other product follows
@@ -147,3 +150,62 @@ WAVES = {
     "C": {"segments": ("pension-savings", "gemel", "savings", "loans", "takanottashlum", "ishtalmutfund",
                        "pension_retirement", "alternativeinvestments")},
 }  # wave D (corporate pages, calculators, ituran, ...) is deliberately not defined: out of scope
+
+
+# --- retrieval (stage 5) ---
+RETRIEVE_FETCH = 10               # chunks pulled from the index per question
+RETRIEVE_MAX_GROUPS = 5           # groups passed on to the prompt
+RETRIEVE_MIN_WORDS = 12           # a chunk body shorter than this is dropped ... (tunable: start 10-15)
+#                                   ... unless it has a digit or a link / address (phone, mail, url)
+RETRIEVE_GROUP_MIN_SIMILARITY = 0.6   # chunks share a group only if same topic + same section title AND their bodies
+#                                       overlap at least this much (word Jaccard): different content is never hidden
+RETRIEVE_CLARIFY_DELTA = 0.04     # "strong" = within this distance of the best group ...
+RETRIEVE_CLARIFY_MAX_DISTANCE = 0.30   # ... and not farther than this
+# Topic of a page = its first URL segment; for claims / customer-service pages the second segment decides.
+# Pages that are not about one product (contact, app, common actions, ...) have topic "general".
+TOPIC_ALIASES = {
+    "claims-health-insurance": "health-insurance", "claims-dental-insurance": "health-insurance",
+    "claims-car-insurance": "car-insurance", "claims-car-insurance-third-party": "car-insurance",
+    "claims-appartment-insurance": "apartment-insurance", "claims-travel-abroad": "travel-insurance",
+    "claims-life-insurance": "life-insurance", "claims-all-embracing-pension": "pension-savings",
+    "pension-benefits": "pension-savings", "claims-business-insurance": "business-insurance",
+    "claims-pets": "pets-insurance", "pets-services": "pets-insurance", "mortgage-services": "mortgage-insurance",
+    "gemel-ishtlamutfund": "gemel", "claims-supportive-insurance": "nursing",
+    "claims-liability-insurance": "liability", "claims-personal-accident-insurance": "personal-accident",
+}
+EXTRA_TOPIC_NAMES = {"nursing": "ביטוח סיעודי", "liability": "ביטוח אחריות", "personal-accident": "ביטוח תאונות אישיות"}
+# Words in a question that name a product (substring match). Needs the owner's approval; see docs/stage5_plan.md.
+PRODUCT_TERMS = {
+    "health-insurance": ("ביטוח בריאות", "בריאות", "רופא", "ניתוח", "תרופ", "אמבולטורי", "מחלה קשה", "מחלות קשות",
+                         "רפואה משלימה", "השתלה", "אשפוז", "שיניים"),
+    "car-insurance": ("ביטוח רכב", "רכב", "תאונת דרכים", "ביטוח חובה", "ביטוח מקיף", "צד ג", "נהג צעיר", "מוסך", "שמאי",
+                      "גרירה"),
+    "apartment-insurance": ("ביטוח דירה", "דירה", "תכולה", "ביטוח מבנה", "נזקי מים", "פריצה"),
+    "travel-insurance": ("ביטוח נסיעות", "נסיעות", "חו\"ל", "טיסה", "מזוודה", "כבודה"),
+    "life-insurance": ("ביטוח חיים", "מקרה מוות", "פטירה"),
+    "disability-and-incapacity-to-work": ("אובדן כושר עבודה", "אובדן כושר"),
+    "pension-savings": ("פנסיה", "ביטוח מנהלים", "קרן פנסיה"),
+    "gemel": ("קופת גמל", "גמל"),
+    "ishtalmutfund": ("קרן השתלמות", "השתלמות"),
+    "savings": ("פוליסת חיסכון", "חיסכון", "השקעה", "השקעות"),
+    "loans": ("הלוואה", "הלוואות"),
+    "mortgage-insurance": ("משכנתא", "משכנתה"),
+    "pets-insurance": ("חיות מחמד", "כלב", "חתול"),
+    "business-insurance": ("ביטוח עסק", "ביטוח עסקים"),
+}
+
+# --- language model (stage 5) ---
+# Never "gemini-2.5-flash" / "gemini-2.5-pro" (deprecated). The limits below are CONSERVATIVE PLACEHOLDERS until
+# the owner reads the real values in AI Studio (the public docs publish no free-tier numbers).
+LLM_MODEL_FAST = "gemini-3.5-flash-lite"   # classify / rewrite
+LLM_MODEL_ANSWER = "gemini-3.6-flash"      # answer
+LLM_FORBIDDEN_MODELS = ("gemini-2.5-flash", "gemini-2.5-pro")
+LLM_RPM_LIMIT = 5                 # real limit (placeholder): requests per minute
+LLM_TPM_LIMIT = 100_000           # real limit (placeholder): input tokens per minute (estimated)
+LLM_RPM = max(int(LLM_RPM_LIMIT * RATE_SAFETY), 1)   # effective
+LLM_TPM = int(LLM_TPM_LIMIT * RATE_SAFETY)
+LLM_RPD = 100                     # requests per day (per model, per project; resets at midnight Pacific)
+LLM_TIMEOUT_MS = 30_000
+LLM_TEMPERATURE = 0.0
+LLM_RETRIES = 1                   # one retry on a broken JSON / 5xx, then LLMError (status "error", never not_found)
+LLM_USAGE_PATH = ROOT / "data" / "llm_usage.json"

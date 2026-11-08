@@ -38,7 +38,8 @@
 - ספק המודל מאחורי `generate(prompt, schema) -> dict` ב-`llm.py` בלבד.
 - `bootstrap.py` (truststore) נטען בכל נקודת כניסה. `timeout=(5, 30)` בכל בקשה.
 - עדכון אינדקס: למחוק קטעים ישנים של אותו url ושל עמודים שנעלמו, ואז upsert. collection חדש מוחלף רק אחרי הצלחה.
-- `BotReply`: `status, text, sources, is_coverage, missing, debug`. סטטוסים: answered, partial, not_found, out_of_scope, personal, advice, greeting, error.
+- `BotReply`: `status, text, sources, is_coverage, missing, debug`. סטטוסים: answered, partial, not_found, out_of_scope, personal, advice, greeting, clarify, error.
+- `clarify`: שאלת הבהרה אחת בלבד, ורק כשהקטעים החזקים מגיעים ממוצרים שונים ואין סימן מוצר בשאלה. אם התשובה להבהרה אינה מזהה מוצר, עונים על שני המוצרים. `debug` מכיל את המוצרים (`conflict_topics`).
 - נוסח not_found: "לא מצאתי את זה במידע שאליו יש לי גישה מאתר הפניקס".
 
 ## פרטיות

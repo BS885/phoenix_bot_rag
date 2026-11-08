@@ -138,14 +138,15 @@ def is_retryable(exc: Exception) -> bool:
     return any(k in text for k in ("RESOURCE_EXHAUSTED", "UNAVAILABLE", "429", "503", "timed out"))
 
 
-def with_retries(fn, sleep=time.sleep):
+def with_retries(fn, sleep=time.sleep, attempts: int | None = None):
     """Call fn(). 5xx: exponential backoff, up to EMBED_RETRIES attempts. 429: NEVER a retry loop.
 
     A daily 429 stops at once (QuotaStop). A per-minute 429 waits EMBED_QUOTA_WAIT_SEC and retries at most
     EMBED_QUOTA_RETRIES times, then stops.
     """
+    attempts = attempts or config.EMBED_RETRIES
     last, quota_waits, attempt = None, 0, 0
-    while attempt < config.EMBED_RETRIES:
+    while attempt < attempts:
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001  (SDK exception types vary by version)
@@ -164,9 +165,9 @@ def with_retries(fn, sleep=time.sleep):
                 raise
             last = exc
             attempt += 1
-            if attempt < config.EMBED_RETRIES:
+            if attempt < attempts:
                 sleep(config.EMBED_BACKOFF_SEC * (2 ** (attempt - 1)))
-    raise EmbeddingError(f"gave up after {config.EMBED_RETRIES} attempts: {last}")
+    raise EmbeddingError(f"gave up after {attempts} attempts: {last}")
 
 
 # ---------- quota: per-minute window (texts + tokens) and per-day count ----------
@@ -253,13 +254,22 @@ class ThrottledEmbedder:
         if len(texts) > self.usage.remaining:
             raise QuotaStop(f"daily limit: {self.usage.used}/{self.usage.limit} texts used today, "
                             f"{len(texts)} more requested", daily=True)
-        self.limiter.acquire(len(texts), sum(estimate_tokens(t) for t in texts))
+        tokens = sum(estimate_tokens(t) for t in texts)
+        # The gate runs before EVERY attempt, retries (5xx, after a 429) included: Google counts each of them.
+        gate = lambda: self.limiter.acquire(len(texts), tokens)  # noqa: E731
+        if hasattr(self.inner, "gate"):
+            self.inner.gate = gate
+        else:
+            gate()
         try:
             vectors = self.inner.embed(texts)
         except QuotaStop as exc:
             if exc.daily:
                 self.usage.set_used(self.usage.limit)
             raise
+        finally:
+            if hasattr(self.inner, "gate"):
+                self.inner.gate = None
         self.usage.add(len(texts))
         return vectors
 
@@ -277,6 +287,7 @@ class GeminiEmbedder:
         self._types = types
         self._client = genai.Client(api_key=api_key or get_api_key())
         self._sleep = sleep
+        self.gate = None   # set by ThrottledEmbedder: called before every attempt, retries included
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         types = self._types
@@ -284,6 +295,8 @@ class GeminiEmbedder:
         cfg = types.EmbedContentConfig(output_dimensionality=config.EMBED_DIM)
 
         def call():
+            if self.gate:
+                self.gate()
             return self._client.models.embed_content(model=config.EMBED_MODEL, contents=contents, config=cfg)
 
         result = with_retries(call, self._sleep)
