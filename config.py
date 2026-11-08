@@ -197,14 +197,17 @@ PRODUCT_TERMS = {
 # --- language model (stage 5) ---
 # Never "gemini-2.5-flash" / "gemini-2.5-pro" (deprecated). The limits below are CONSERVATIVE PLACEHOLDERS until
 # the owner reads the real values in AI Studio (the public docs publish no free-tier numbers).
-LLM_MODEL_FAST = "gemini-3.5-flash-lite"   # classify / rewrite
-LLM_MODEL_ANSWER = "gemini-3.6-flash"      # answer
+LLM_MODEL_FAST = "gemini-3.5-flash-lite"   # the main model: classify / rewrite / answer (owner decision, 8.11)
+LLM_MODEL_ANSWER = LLM_MODEL_FAST          # answer too: one model keeps the whole flow within one quota
+LLM_MODEL_COMPARE = "gemini-3.6-flash"     # manual quality comparison ONLY, never in the regular flow
 LLM_FORBIDDEN_MODELS = ("gemini-2.5-flash", "gemini-2.5-pro")
-LLM_RPM_LIMIT = 5                 # real limit (placeholder): requests per minute
-LLM_TPM_LIMIT = 100_000           # real limit (placeholder): input tokens per minute (estimated)
-LLM_RPM = max(int(LLM_RPM_LIMIT * RATE_SAFETY), 1)   # effective
-LLM_TPM = int(LLM_TPM_LIMIT * RATE_SAFETY)
-LLM_RPD = 100                     # requests per day (per model, per project; resets at midnight Pacific)
+# Real limits per model (read by the owner from AI Studio). The limiter works at RATE_SAFETY (80%) of RPM/TPM and the
+# daily counter stops at LLM_RPD_CAP, which leaves a reserve below the real daily limit.
+LLM_LIMITS = {
+    "gemini-3.5-flash-lite": {"rpm": 15, "tpm": 250_000, "rpd": 500, "rpd_cap": 400},
+    "gemini-3.6-flash": {"rpm": 5, "tpm": 100_000, "rpd": 20, "rpd_cap": 16},   # TPM not read yet: placeholder
+}
+LLM_DEFAULT_LIMITS = {"rpm": 5, "tpm": 100_000, "rpd": 20, "rpd_cap": 16}      # unknown model: the strictest
 LLM_TIMEOUT_MS = 30_000
 LLM_TEMPERATURE = 0.0
 LLM_RETRIES = 1                   # one retry on a broken JSON / 5xx, then LLMError (status "error", never not_found)

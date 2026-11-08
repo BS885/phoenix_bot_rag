@@ -53,10 +53,17 @@ class LLM:
                  rpm: int | None = None, tpm: int | None = None, rpd: int | None = None, on_wait=None):
         self._backend = backend
         self._sleep, self._clock, self._on_wait = sleep, clock, on_wait
-        self._rpm, self._tpm, self._rpd = rpm or config.LLM_RPM, tpm or config.LLM_TPM, rpd or config.LLM_RPD
+        self._override = (rpm, tpm, rpd)   # tests: one set of limits for every model
         self._usage_dir = Path(usage_dir) if usage_dir else config.LLM_USAGE_PATH.parent
         self._limiters: dict[str, embed.RateLimiter] = {}
         self._usage: dict[str, embed.DailyUsage] = {}
+
+    def limits(self, model: str) -> tuple[int, int, int]:
+        """(requests/min, tokens/min, requests/day) the bot may use: 80% of RPM/TPM, the daily cap."""
+        rpm, tpm, rpd = self._override
+        lim = config.LLM_LIMITS.get(model, config.LLM_DEFAULT_LIMITS)
+        return (rpm or max(int(lim["rpm"] * config.RATE_SAFETY), 1), tpm or int(lim["tpm"] * config.RATE_SAFETY),
+                rpd or lim["rpd_cap"])
 
     @property
     def backend(self):
@@ -67,12 +74,12 @@ class LLM:
     def usage(self, model: str) -> "embed.DailyUsage":
         if model not in self._usage:
             safe = model.replace("/", "_")
-            self._usage[model] = embed.DailyUsage(self._usage_dir / f"llm_usage_{safe}.json", limit=self._rpd)
+            self._usage[model] = embed.DailyUsage(self._usage_dir / f"llm_usage_{safe}.json", limit=self.limits(model)[2])
         return self._usage[model]
 
     def _limiter(self, model: str) -> "embed.RateLimiter":
         if model not in self._limiters:
-            self._limiters[model] = embed.RateLimiter(self._rpm, self._tpm, clock=self._clock, sleep=self._sleep,
+            self._limiters[model] = embed.RateLimiter(*self.limits(model)[:2], clock=self._clock, sleep=self._sleep,
                                                       on_wait=self._on_wait)
         return self._limiters[model]
 

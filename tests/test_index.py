@@ -240,7 +240,6 @@ class TestQuota(IndexTestCase):
 class TestRetriesAreThrottled(unittest.TestCase):
     def test_effective_limits_are_80_percent(self):
         self.assertEqual((config.EMBED_RPM, config.EMBED_TPM), (80, 24_000))
-        self.assertLessEqual(config.LLM_RPM, config.LLM_RPM_LIMIT * 0.8)
 
     def test_every_attempt_passes_the_limiter_not_only_the_first(self):
         class Flaky:

@@ -99,9 +99,29 @@ class TestGenerate(unittest.TestCase):
     def test_usage_is_kept_per_model(self):
         m = make(FakeBackend(['{"a": "1"}', '{"a": "2"}']))
         m.generate("p", SCHEMA, model=config.LLM_MODEL_FAST)
-        m.generate("p", SCHEMA, model=config.LLM_MODEL_ANSWER)
+        m.generate("p", SCHEMA, model=config.LLM_MODEL_COMPARE)
         self.assertEqual(m.usage(config.LLM_MODEL_FAST).used, 1)
-        self.assertEqual(m.usage(config.LLM_MODEL_ANSWER).used, 1)
+        self.assertEqual(m.usage(config.LLM_MODEL_COMPARE).used, 1)
+
+
+class TestModelLimits(unittest.TestCase):
+    def test_main_model_runs_at_80_percent_with_a_daily_cap(self):
+        m = llm.LLM(backend=FakeBackend([]), usage_dir=tempfile.mkdtemp())
+        self.assertEqual(m.limits("gemini-3.5-flash-lite"), (12, 200_000, 400))
+
+    def test_compare_model_has_its_own_small_limits_and_is_not_the_default(self):
+        m = llm.LLM(backend=FakeBackend([]), usage_dir=tempfile.mkdtemp())
+        self.assertEqual(m.limits(config.LLM_MODEL_COMPARE)[0::2], (4, 16))
+        self.assertNotIn(config.LLM_MODEL_COMPARE, (config.LLM_MODEL_FAST, config.LLM_MODEL_ANSWER))
+        self.assertEqual(m.limits("some-unknown-model")[0::2], (4, 16))     # unknown = strictest
+
+    def test_daily_cap_stops_before_the_real_limit_with_a_clear_error(self):
+        m = llm.LLM(backend=FakeBackend(['{"a": "1"}'] * 3), usage_dir=tempfile.mkdtemp(), rpd=2)
+        m.generate("p", SCHEMA)
+        m.generate("p", SCHEMA)
+        with self.assertRaises(llm.LLMQuotaError) as cm:
+            m.generate("p", SCHEMA)
+        self.assertIsInstance(cm.exception, llm.LLMError)       # -> status "error", never not_found
 
 
 if __name__ == "__main__":
