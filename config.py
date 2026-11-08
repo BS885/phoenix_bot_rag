@@ -159,6 +159,8 @@ RETRIEVE_MIN_WORDS = 12           # a chunk body shorter than this is dropped ..
 #                                   ... unless it has a digit or a link / address (phone, mail, url)
 RETRIEVE_GROUP_MIN_SIMILARITY = 0.6   # chunks share a group only if same topic + same section title AND their bodies
 #                                       overlap at least this much (word Jaccard): different content is never hidden
+FULL_CONTEXT_MAX_WORDS_SECTION = 600   # full context of one section (all its parts by section_id); the found chunk is always kept
+FULL_CONTEXT_MAX_WORDS_TOTAL = 1500    # the whole context passed to the prompt
 RETRIEVE_CLARIFY_DELTA = 0.04     # "strong" = within this distance of the best group ...
 RETRIEVE_CLARIFY_MAX_DISTANCE = 0.30   # ... and not farther than this
 # Topic of a page = its first URL segment; for claims / customer-service pages the second segment decides.
@@ -205,7 +207,7 @@ LLM_FORBIDDEN_MODELS = ("gemini-2.5-flash", "gemini-2.5-pro")
 # daily counter stops at LLM_RPD_CAP, which leaves a reserve below the real daily limit.
 LLM_LIMITS = {
     "gemini-3.5-flash-lite": {"rpm": 15, "tpm": 250_000, "rpd": 500, "rpd_cap": 400},
-    "gemini-3.6-flash": {"rpm": 5, "tpm": 100_000, "rpd": 20, "rpd_cap": 16},   # TPM not read yet: placeholder
+    "gemini-3.6-flash": {"rpm": 5, "tpm": 250_000, "rpd": 20, "rpd_cap": 16},
 }
 LLM_DEFAULT_LIMITS = {"rpm": 5, "tpm": 100_000, "rpd": 20, "rpd_cap": 16}      # unknown model: the strictest
 LLM_TIMEOUT_MS = 30_000
