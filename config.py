@@ -122,7 +122,7 @@ EMBED_QUOTA_WAIT_SEC = 65       # a per-minute 429: wait this long, retry at mos
 EMBED_QUOTA_RETRIES = 2
 EMBED_DAILY_RESERVE = 300       # --daily keeps this many texts of the day's quota free for questions (development days)
 DAILY_PRODUCT_ORDER = ("health-insurance", "life-insurance", "disability-and-incapacity-to-work", "ishtalmutfund",
-                       "car-insurance", "apartment-insurance", "travel-insurance", "gemel", "pension-savings",
+                       "apartment-insurance", "car-insurance", "travel-insurance", "gemel", "pension-savings",
                        "savings")  # --daily embeds in this order; every other product follows
 EMBED_USAGE_PATH = ROOT / "data" / "embed_usage.json"
 EMBED_CACHE_PATH = ROOT / "data" / "embed_cache.sqlite"
