@@ -1,0 +1,62 @@
+{
+  "_readme": [
+    "Example questions per guardrail class (stage 5.3). Written BEFORE the keyword lists in config.py; the lists must satisfy all of them.",
+    "Expected result per class: coverage -> kind none + coverage flag (search runs, caveat added); pure_personal -> kind personal (no search, refer to the personal area);",
+    "suspected_personal -> kind none + suspected_personal flag (search runs, caveat added); advice -> kind advice (polite refusal); greeting -> kind greeting;",
+    "procedure -> kind none, no flags (the question looks like advice/personal but asks how the site's process works).",
+    "'tricky' marks a question that looks like another class; 'imprecise' marks a loose or misspelled wording."
+  ],
+  "classes": {
+    "coverage": [
+      {"q": "מה ההחזר שיש לי על דיקור סיני?"},
+      {"q": "האם אני זכאי להחזר על ניתוח?"},
+      {"q": "מה הכיסוי שלי על תרופות?"},
+      {"q": "האם התביעה שלי מכוסה?", "tricky": "contains 'התביעה שלי' (personal) but coverage wins"},
+      {"q": "כמה כסף חוזר לי על דיקור?", "imprecise": true}
+    ],
+    "pure_personal": [
+      {"q": "מה מצב התביעה שלי?"},
+      {"q": "מה הסטטוס של התביעה?"},
+      {"q": "מתי יאשרו לי את הבקשה?"},
+      {"q": "מה היתרה שלי בקרן?"},
+      {"q": "התביעה שלי תקועה, אף אחד לא חזר אליי", "imprecise": true},
+      {"q": "האם יאשרו לי את הניתוח?"}
+    ],
+    "suspected_personal": [
+      {"q": "איך מבטלים את הפוליסה שלי?", "tricky": "'הפוליסה שלי' with a how-to word is a procedure question, not a status question"},
+      {"q": "אצלי באפליקציה לא נפתח הטופס"},
+      {"q": "איך מוסיפים ילד לביטוח שלנו?"},
+      {"q": "הרופא שלי ביקש ממני אישור, איך מקבלים אותו?"},
+      {"q": "למה ההודעה שלי לא נשלחה", "imprecise": true}
+    ],
+    "advice": [
+      {"q": "איזו קרן השתלמות הכי טובה?"},
+      {"q": "מה עדיף לי, ביטוח בריאות או ביטוח משלים?"},
+      {"q": "תמליצו לי על ביטוח נסיעות"},
+      {"q": "האם להצטרף לפנסיה?"},
+      {"q": "מה הכי משתלם לי לקנות?", "imprecise": true},
+      {"q": "איך כדאי לי לבחור בין שתי קרנות?", "tricky": "has a how-to word ('איך') but a choice verb ('לבחור') decides: advice"}
+    ],
+    "greeting": [
+      {"q": "שלום"},
+      {"q": "בוקר טוב"},
+      {"q": "תודה רבה"},
+      {"q": "מה נשמע?"},
+      {"q": "הייייי", "imprecise": true}
+    ],
+    "procedure": [
+      {"q": "כדאי לי לצרף מסמך לתביעה?", "tricky": "looks like advice ('כדאי לי') but asks about the claim procedure"},
+      {"q": "איך מגישים תביעה לביטוח בריאות?"},
+      {"q": "לאן שולחים את טופס התביעה?"},
+      {"q": "מה צריך לצרף לתביעה על ניתוח?"},
+      {"q": "איפה מוצאים את מספר הטלפון של המוקד", "imprecise": true},
+      {"q": "איך מגישים תביעה?"}
+    ]
+  },
+  "pending_owner_decision": [
+    {"q": "מה מקבלים על דיקור?", "owner_expects": "coverage",
+     "note": "Classified 'none' with no flag: 'מקבלים' is a how-to word and no coverage phrase matches. Not fixed, waiting for the owner."},
+    {"q": "מה הכי טוב לצרף לתביעה?", "owner_expects": "procedure",
+     "note": "Classified 'advice': 'הכי טוב' is a choice phrase and decides advice even with 'לצרף'. Conflicts with the owner's own choice-verb rule. Not fixed, waiting for the owner."}
+  ]
+}

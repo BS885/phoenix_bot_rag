@@ -215,3 +215,27 @@ LLM_TIMEOUT_MS = 30_000
 LLM_TEMPERATURE = 0.0
 LLM_RETRIES = 1                   # one retry on a broken JSON / 5xx, then LLMError (status "error", never not_found)
 LLM_USAGE_PATH = ROOT / "data" / "llm_usage.json"
+
+# --- guardrails (stage 5.3, plan section 12) ---
+# Matching: substring on the normalized question (no niqqud / quotes / punctuation; runs of 3+ equal letters collapsed).
+# Priority: coverage > pure personal > advice > greeting. Every list must satisfy eval/guardrail_cases.json.
+GUARD_COVERAGE = ("מכסה", "מכוסה", "מכוסים", "מכוסות", "כיסוי שלי", "זכאי", "זכאית", "זכאות", "מגיע לי", "מגיעה לי",
+                  "האם אני מבוטח", "האם אני מבוטחת", "מה ההחזר שיש לי", "כמה אקבל", "כמה מגיע")
+GUARD_COVERAGE_PATTERNS = (r"כמה (כסף )?(חוזר|יחזרו|יחזור|מקבלים|אקבל)",)          # loose wording: "כמה כסף חוזר לי"
+GUARD_PERSONAL_PURE = ("מה מצב התביעה", "מה הסטטוס של התביעה", "מה הסטטוס של הבקשה", "מה מצב הבקשה", "התביעה שלי",
+                       "הפוליסה שלי", "הבקשה שלי", "החשבון שלי", "היתרה שלי", "הצבירה שלי", "יאשרו לי", "האם אושרה",
+                       "מתי יאשרו", "מספר התביעה שלי", "מספר זהות", "תעודת זהות", "תז שלי")
+GUARD_PERSONAL_ID_PATTERN = r"\b\d{9}\b"
+GUARD_SUSPECT_WORDS = ("שלי", "שלנו", "אצלי", "אצלנו", "אליי", "בשבילי", "עבורי")
+# a how-to word turns a pure-personal phrase and a weak advice phrase into a procedure question
+GUARD_PROCEDURE = ("איך", "כיצד", "לצרף", "צירוף", "להגיש", "מגישים", "לשלוח", "שולחים", "למלא", "מוצאים",
+                   "מקבלים", "לבטל", "מבטלים", "לעדכן", "מעדכנים", "להוסיף", "מוסיפים", "מסמך", "מסמכים", "טופס", "טפסים",
+                   "אישור", "אישורים", "איפה", "לאן", "מה צריך")
+GUARD_ADVICE_STRONG = ("מומלץ לי", "מה עדיף", "איזו קרן הכי", "איזה ביטוח הכי", "הכי טובה", "הכי טוב", "הכי משתלם",
+                       "במה להשקיע", "האם לקנות", "האם להצטרף", "תמליצו", "תמליץ", "איך לבחור בין")
+# choice verbs decide "advice" even when the question also has a how-to word ("איך כדאי לי לבחור בין שתי קרנות?")
+GUARD_CHOICE_VERBS = ("לבחור", "לקנות", "להצטרף", "להשקיע", "עדיף", "הכי טוב", "הכי טובה")
+GUARD_ADVICE_WEAK =("כדאי לי", "כדאי לנו", "מומלץ")          # advice only when the question has no how-to word
+GUARD_GREETING = ("שלום", "היי", "הי", "בוקר טוב", "ערב טוב", "צהריים טובים", "מה שלומכם", "מה שלומך", "מה נשמע",
+                  "תודה", "תודה רבה", "להתראות", "ביי", "שבוע טוב", "יום טוב")
+GUARD_GREETING_MAX_WORDS = 4
