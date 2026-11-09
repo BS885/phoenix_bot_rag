@@ -131,13 +131,13 @@ def _source(hit: dict) -> dict:
 
 
 def process_hits(question: str, hits: list[dict], *, min_words: int | None = None,
-                 max_groups: int | None = None) -> Retrieval:
+                 max_groups: int | None = None, products: list[str] | None = None) -> Retrieval:
     """Everything after the vector search; pure, so it is testable without an index."""
     max_groups = max_groups or config.RETRIEVE_MAX_GROUPS
     hits = sorted(hits, key=lambda h: h["distance"])
     for h in hits:
         h["topic"] = topic_of(h["url"])
-    detected = detect_products(question)
+    detected = detect_products(question) or list(products or [])   # a product inherited from the conversation
     out = Retrieval(groups=[], detected_products=detected, fetched=len(hits))
 
     kept = [h for h in hits if not is_very_short(h, min_words)]
@@ -272,8 +272,8 @@ class Retriever:
         return [{"id": i, "text": d, "chunk_no": int(md.get("chunk_no", 0))}
                 for i, d, md in zip(res["ids"], res["documents"], res["metadatas"])]
 
-    def retrieve(self, question: str) -> Retrieval:
+    def retrieve(self, question: str, products: list[str] | None = None) -> Retrieval:
         vector = embed.embed_query(question, self.embedder, self.cache)
-        out = process_hits(question, query_index(self.col, vector))
+        out = process_hits(question, query_index(self.col, vector), products=products)
         expand_context(out.groups, self.siblings)
         return out
