@@ -163,9 +163,21 @@ _SINGULAR_FORMS = {"אתה", "תוכל", "תוכלי", "תרצה", "תרצי", "
 LINK_ONLY_MAX_WORDS = 6        # a source body with at most this many words outside links is a "heading + link" source
 
 
+_SUFFIXES = ("יות", "ים", "ות", "ה", "ת", "ם", "ן")        # plural / feminine / construct endings, for the overlap check only
+
+
 def stem(word: str) -> str:
-    """Crude Hebrew stem for overlap: one leading prefix letter is dropped from words of 4+ letters."""
-    return word[1:] if len(word) >= 4 and word[0] in _PREFIX_LETTERS else word
+    """Light normalisation for the OVERLAP check only (a quote is always compared word for word): up to three leading prefix
+    letters (ה ו ב ל מ ש כ) and one plural / feminine ending are dropped, never below three letters."""
+    for _ in range(3):
+        if len(word) >= 4 and word[0] in _PREFIX_LETTERS:
+            word = word[1:]
+        else:
+            break
+    for suf in _SUFFIXES:
+        if word.endswith(suf) and len(word) - len(suf) >= 3:
+            return word[:-len(suf)]
+    return word
 
 
 def content_words(text: str) -> list[str]:
@@ -178,6 +190,13 @@ def overlap(text: str, quote: str) -> float:
     if not tw or not qw:
         return 0.0
     return len(tw & qw) / min(len(tw), len(qw))
+
+
+def best_overlap(text: str, quote: str, label: str = "") -> float:
+    """Overlap of the claim text with its quote; for a heading+link source also with the label line + quote (the quote of such a
+    source is just a link line, the words that say what it is are in the section title)."""
+    base = overlap(text, quote)
+    return max(base, overlap(text, f"{label} {quote}")) if label else base
 
 
 def singular_forms(text: str) -> list[str]:
@@ -273,6 +292,7 @@ def verify_claims(claims: list[dict], sources: list[dict], *, min_overlap: float
     # of that whole text (it may cross from the label into the body), but never a join of two distant parts.
     source_words = {s["n"]: words(source_label(s)) + words(s["text"]) for s in sources}
     link_only = {n for n, t in by_n.items() if is_link_only(t)}
+    by_src = {s["n"]: s for s in sources}
     title_words = {s["n"]: [words(s.get("section", "")), words(s.get("title", "")),
                             words(f"{s.get('title', '')} {s.get('section', '')}")] for s in sources}
     out = ClaimsVerification()
@@ -306,8 +326,8 @@ def verify_claims(claims: list[dict], sources: list[dict], *, min_overlap: float
         soft = strength_words_added(text, quote)
         if soft:
             res.ok, res.reason, res.note = False, "strength_word", ", ".join(soft)
-        elif overlap(text, quote) < min_overlap:
-            res.ok, res.reason, res.note = False, "low_overlap", f"{overlap(text, quote):.2f} < {min_overlap}"
+        elif best_overlap(text, quote, source_label(by_src[chk.source]) if chk.source in link_only else "") < min_overlap:
+            res.ok, res.reason, res.note = False, "low_overlap",                 f"{best_overlap(text, quote, source_label(by_src[chk.source]) if chk.source in link_only else ''):.2f} < {min_overlap}"
         else:
             bad_n, bad_l = _unsupported(text, by_n[chk.source])
             if bad_n or bad_l:

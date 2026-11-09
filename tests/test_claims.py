@@ -77,6 +77,49 @@ class TestOverlap(unittest.TestCase):
         self.assertEqual(res.claims[0].reason, "low_overlap")
 
 
+class TestLightNormalisationForOverlap(unittest.TestCase):
+    def test_prefixes_plural_and_feminine_endings_are_normalised(self):
+        self.assertEqual(v.stem("תביעות"), v.stem("תביעה"))
+        self.assertEqual(v.stem("להגיש"), v.stem("ולהגיש"))
+        self.assertEqual(v.stem("בקישור"), v.stem("הקישור"))
+        self.assertEqual(v.stem("התייעצות"), v.stem("ההתייעצות"))
+        self.assertGreaterEqual(len(v.stem("את")), 2)                    # short words are left alone
+
+    def test_a_paraphrase_in_another_form_now_overlaps(self):
+        self.assertGreaterEqual(v.overlap("ניתן להגיש תביעות בריאות", "הגשת תביעה בריאות"), 0.5)
+
+    def test_the_quote_itself_is_still_word_for_word_only(self):
+        src = [{"n": 1, "text": "הטיפול בתביעה נמשך עד 30 ימי עבודה.", "section": "x", "title": "y"}]
+        plural = v.verify_claims([c("הטיפול בתביעות נמשך", "הטיפול בתביעות נמשך עד 30 ימי עבודה")], src).claims[0]
+        self.assertEqual((plural.ok, plural.reason), (False, "not_in_source"))       # 'תביעות' is not in the source
+
+    def test_a_heading_link_source_overlaps_with_its_section_title_too(self):
+        src = [{"n": 1, "section": "התייעצות עם רופא מומחה", "title": "תביעות ביטוח בריאות > להגיש תביעה",
+                "text": "הגשת תביעה (https://ambulatoryclaim.fnx.co.il/)"}]
+        text = "ניתן להגיש תביעות ביטוח בריאות עבור התייעצות עם רופא מומחה בקישור ייעודי"
+        got = v.verify_claims([c(text, "הגשת תביעה (https://ambulatoryclaim.fnx.co.il/)")], src).claims[0]
+        self.assertTrue(got.ok, got)
+        self.assertIn("https://ambulatoryclaim.fnx.co.il/", got.final_text)
+
+    def test_the_section_title_does_not_rescue_an_unrelated_claim_or_an_ordinary_source(self):
+        src = [{"n": 1, "section": "התייעצות עם רופא מומחה", "title": "תביעות ביטוח בריאות > להגיש תביעה",
+                "text": "הגשת תביעה (https://ambulatoryclaim.fnx.co.il/)"}]
+        unrelated = v.verify_claims([c("הפניקס היא חברה גדולה ויציבה בענף", "הגשת תביעה (https://ambulatoryclaim.fnx.co.il/)")], src)
+        self.assertEqual(unrelated.claims[0].reason, "low_overlap")
+        ordinary = [{"n": 1, "section": "התייעצות עם רופא מומחה", "title": "תביעות ביטוח בריאות",
+                     "text": "יש למלא את הטופס באתר ולשלוח אותו עם כל המסמכים הנדרשים למוקד הארצי של החברה."}]
+        got = v.verify_claims([c("ניתן להגיש תביעות ביטוח בריאות עבור התייעצות עם רופא מומחה", "יש למלא את הטופס באתר")], ordinary)
+        self.assertEqual(got.claims[0].reason, "low_overlap")        # label overlap is for heading+link sources only
+
+    def test_recommend_before_the_surgery_against_an_unrelated_quote_is_still_rejected(self):
+        src = [{"n": 1, "text": "הטיפול בתביעה נמשך עד 30 ימי עבודה. עוד מילים כלליות על הפוליסה והשירות.", "section": "x", "title": "y"}]
+        quote = "הטיפול בתביעה נמשך עד 30 ימי עבודה"
+        soft = v.verify_claims([c("מומלץ לפנות לפני הניתוח", quote)], src).claims[0]
+        self.assertEqual((soft.ok, soft.reason), (False, "strength_word"))
+        plain = v.verify_claims([c("יש לפנות לפני הניתוח", quote)], src).claims[0]
+        self.assertEqual((plain.ok, plain.reason), (False, "low_overlap"))
+
+
 class TestValuesInTheClaimText(unittest.TestCase):
     def test_values_in_the_quote_or_the_source_pass(self):
         self.assertTrue(one("הטיפול נמשך עד 30 ימי עבודה", "הטיפול בתביעה נמשך עד 30 ימי עבודה").ok)
