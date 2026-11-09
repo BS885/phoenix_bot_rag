@@ -205,7 +205,21 @@ class TestClarify(unittest.TestCase):
         self.assertEqual(out.status, "clarify")
         self.assertIn("ביטוח בריאות", out.text)
         self.assertIn("ביטוח רכב", out.text)
+        self.assertTrue(out.text.endswith("?"))
         self.assertEqual(out.debug["conflict_topics"], ["health-insurance", "car-insurance"])
+
+    def test_at_most_three_options_from_the_best_groups_and_a_question_mark_at_the_end(self):
+        hits = [hit("/claims-customer-service/claims-health-insurance/x/", dist=0.200, n=0),
+                hit("/claims-customer-service/claims-car-insurance/y/", dist=0.205, n=1, body=BODY + " רכב א ב ג ד"),
+                hit("/claims-customer-service/claims-appartment-insurance/z/", dist=0.210, n=2, body=BODY + " דירה ה ו ז ח"),
+                hit("/claims-customer-service/claims-travel-abroad/w/", dist=0.215, n=3, body=BODY + " נסיעות ט י כ ל")]
+        out, _ = run("איך מגישים תביעה?", Gen(reply()), hits=hits)
+        self.assertEqual(out.status, "clarify")
+        self.assertTrue(out.text.endswith("?"))
+        self.assertEqual(out.text.count("ביטוח"), 3)
+        self.assertIn("ביטוח בריאות", out.text)
+        self.assertNotIn("ביטוח נסיעות", out.text)          # the fourth is cut
+        self.assertEqual(len(out.debug["conflict_topics"]), 4)
 
     def test_out_of_scope_is_decided_before_clarify(self):
         out, _ = run("מה גובה קצבת הנכות?", Gen(reply(found=False, answer="", citations=[], out_of_scope=True)),

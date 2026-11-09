@@ -23,5 +23,15 @@ class TestAnswerCases(unittest.TestCase):
         self.assertIn(case["query"], [c["query"] for c in sanity["cases"]])   # the same wording as q3
 
 
+class TestA1(unittest.TestCase):
+    def test_a1_requires_both_stages(self):
+        import json
+        cases = json.loads((ROOT / "eval" / "answer_cases.json").read_text(encoding="utf-8"))["cases"]
+        a1 = next(c for c in cases if c["id"] == "a1")
+        self.assertEqual(a1["query"], "יש לי ניתוח, מה אני צריך לעשות בשביל זה?")
+        self.assertEqual(len(a1["must_mention"]), 2)
+        self.assertTrue(all(m["any_of"] for m in a1["must_mention"]))
+
+
 if __name__ == "__main__":
     unittest.main()

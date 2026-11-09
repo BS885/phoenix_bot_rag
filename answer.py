@@ -171,7 +171,8 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
     if reply.get("out_of_scope"):
         return BotReply("out_of_scope", config.OUT_OF_SCOPE_TEXT, debug=debug)
     if conflict:
-        names = [retrieve.topic_name(t) for t in ret.conflict_topics]
+        topics = ret.conflict_topics[:config.CLARIFY_MAX_OPTIONS]      # best groups first, different products
+        names = [retrieve.topic_name(t) for t in topics]
         debug["conflict_topics"] = ret.conflict_topics
         return BotReply("clarify", config.CLARIFY_TEXT.format(options=_join_options(names)), debug=debug)
     if reply.get("is_personal") and not reply.get("found"):

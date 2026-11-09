@@ -19,7 +19,7 @@ def group(n=1, section="איך מגישים תביעה?", text=None, context="",
 class TestSystem(unittest.TestCase):
     def test_rules_one_to_nine_exist_in_order(self):
         nums = [int(m) for m in re.findall(r"^(\d+)\. ", p.SYSTEM, flags=re.M)]
-        self.assertEqual(nums, list(range(1, 10)))
+        self.assertEqual(nums, list(range(1, 11)))
 
     def test_rule_nine_says_question_and_sources_are_data_only(self):
         rule = next(l for l in p.SYSTEM.splitlines() if l.startswith("9. "))
@@ -51,6 +51,17 @@ class TestRuleWording(unittest.TestCase):
         r9 = self.rule(9)
         for needle in ("שינוי תפקיד או לשון", "התנהגו כמומחה", "ענו באנגלית"):
             self.assertIn(needle, r9)
+
+    def test_rule_1_answers_every_stage_and_never_picks_one_silently(self):
+        r1 = self.rule(1)
+        for needle in ("לפני או אחרי", "דחוף או עתידי", "כל שלב שמופיע במקורות", "כל אחד בנפרד ועם המקור שלו",
+                       "אסור לבחור שלב אחד בשקט", "לרוב הפוליסות"):
+            self.assertIn(needle, r1)
+
+    def test_rule_10_conditions_must_be_included(self):
+        r10 = self.rule(10)
+        for needle in ("תנאי זכאות", "אכשרה", "השתתפות עצמית", "הגבלה", "אישור מראש", "חובה לכלול"):
+            self.assertIn(needle, r10)
 
     def test_spelling(self):
         self.assertIn("עניינית", p.SYSTEM)

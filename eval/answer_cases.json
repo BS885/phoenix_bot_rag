@@ -5,6 +5,16 @@
   ],
   "cases": [
     {
+      "id": "a1",
+      "query": "יש לי ניתוח, מה אני צריך לעשות בשביל זה?",
+      "expected_status": ["answered", "partial"],
+      "must_mention": [
+        {"label": "approval for a future surgery", "any_of": ["אישור לניתוח עתידי", "ניתוח עתידי"]},
+        {"label": "phone for an urgent surgery", "any_of": ["3455*", "ניתוח דחוף"]}
+      ],
+      "note": "The question fits several stages (before/after, urgent/future). The answer must cover the future-surgery approval AND the urgent-surgery phone, not only claim submission. Never one stage chosen silently."
+    },
+    {
       "id": "a3",
       "query": "לייעוץ הרופא, מה אני צריך לצרף?",
       "expected_status": ["partial", "clarify"],
