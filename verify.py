@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 
 QUOTE_MIN_WORDS = 2
+TRUNCATED_LAST_WORD_MIN = 2      # the last word of a quote may be a prefix (this many characters or more) of the source word
 QUOTE_MAX_WORDS = 25
 
 _NIQQUD = re.compile(r"[֑-ׇ]")
@@ -35,8 +36,18 @@ def words(text: str) -> list[str]:
 
 
 def _contains_run(haystack: list[str], needle: list[str]) -> bool:
+    """`needle` appears in `haystack` as one contiguous run. The LAST word of the needle may be cut: a prefix of at least
+    TRUNCATED_LAST_WORD_MIN characters of the word in the haystack (a model cutting 'דוא"ל' to 'דוא'); every other word is exact."""
     n = len(needle)
-    return n > 0 and any(haystack[i:i + n] == needle for i in range(len(haystack) - n + 1))
+    if n == 0:
+        return False
+    for i in range(len(haystack) - n + 1):
+        if haystack[i:i + n - 1] != needle[:-1]:
+            continue
+        last, src = needle[-1], haystack[i + n - 1]
+        if last == src or (n > 1 and len(last) >= TRUNCATED_LAST_WORD_MIN and src.startswith(last)):
+            return True
+    return False
 
 
 def _canon_url(url: str) -> str:

@@ -61,6 +61,45 @@ class TestQuotes(unittest.TestCase):
         self.assertEqual(out.used_sources, [1])
 
 
+class TestTruncatedLastWord(unittest.TestCase):
+    SRC = [{"n": 1, "text": "ולהוסיף כתובת דוא\"ל עדכנית. אחר כך שולחים את הטופס למוקד הארצי של החברה."}]
+
+    def check(self, quote):
+        return v.verify("", [cite(1, quote)], self.SRC).citations[0]
+
+    def test_a_cut_last_word_that_is_a_prefix_passes(self):
+        self.assertTrue(self.check("ולהוסיף כתובת דוא").ok)               # דוא from דוא"ל
+        self.assertTrue(self.check("אחר כך שולחים את הטופס למו").ok)       # למו from למוקד
+
+    def test_the_exact_quote_still_passes(self):
+        self.assertTrue(self.check("ולהוסיף כתובת דוא\"ל עדכנית").ok)
+
+    def test_a_changed_word_in_the_middle_is_rejected_even_if_the_last_word_is_cut(self):
+        for quote in ("ולהוסיף כתובות דוא", "ולהוסיף כתובת אימייל דוא", "אחר כך שולחים את המסמך למו"):
+            got = self.check(quote)
+            self.assertEqual((got.ok, got.reason), (False, "not_in_source"), quote)
+
+    def test_the_cut_word_must_be_a_prefix_of_at_least_two_characters(self):
+        self.assertEqual(self.check("ולהוסיף כתובת ד").reason, "not_in_source")                 # 1 character
+        self.assertEqual(self.check("ולהוסיף כתובת אל").reason, "not_in_source")                # not a prefix
+        self.assertEqual(self.check("ולהוסיף כתובת ל\"ל").reason, "not_in_source")               # a suffix, not a prefix
+
+    def test_only_the_last_word_may_be_cut_not_the_first_or_a_middle_one(self):
+        self.assertEqual(self.check("להוסיף כתובת דוא\"ל").reason, "not_in_source")             # first word cut (source has ולהוסיף)
+        self.assertEqual(self.check("ולהוסיף כתו דוא\"ל").reason, "not_in_source")
+
+    def test_a_single_word_quote_cannot_be_a_prefix(self):
+        self.assertEqual(self.check("דוא").reason, "too_short")
+        src = [{"n": 1, "text": "דוא\"ל עדכני"}]
+        self.assertFalse(v.verify_claims([{"text": "דוא", "source": 1, "quote": "דו"}], src).claims[0].ok)
+
+    def test_the_live_case(self):
+        src = [{"n": 1, "section": "x", "title": "y",
+                "text": "לפני הגשת התביעה יש לוודא שברשותך המסמכים הבאים: טופס תביעה מלא הכולל פירוט סכום הקבלה ומספר קבלה, כתובת דוא\"ל עדכנית."}]
+        quote = "לפני הגשת התביעה יש לוודא שברשותך המסמכים הבאים טופס תביעה מלא הכולל פירוט סכום הקבלה ומספר קבלה כתובת דוא"
+        self.assertTrue(v.verify_claims([{"text": "יש לוודא טופס תביעה מלא הכולל פירוט סכום הקבלה ומספר קבלה", "source": 1, "quote": quote}], src).claims[0].ok)
+
+
 class TestNumbersAndLinks(unittest.TestCase):
     def run_check(self, answer, quote="יש למלא את הטופס באתר", n=1):
         return v.verify(answer, [cite(n, quote)], SOURCES)
