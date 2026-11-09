@@ -176,5 +176,64 @@ class TestFullContext(unittest.TestCase):
         self.assertEqual((g.chunk_id, g.section_id), ("abc", "sec9"))
 
 
+def sec_hit(path, section, dist, sid, body_word, n, words=60, **kw):
+    body = " ".join(f"{body_word}{i}" for i in range(words))
+    h = hit(path, section, dist, body=body, n=n, **kw)
+    h["id"], h["section_id"] = f"id{n}", sid
+    return h
+
+
+class TestSameSectionMergesOnce(unittest.TestCase):
+    """Question 5 (places 2 and 3): two parts of one section came back as two groups, each with the full context."""
+
+    def hits(self):
+        p = "/claims-customer-service/claims-health-insurance/a/"
+        return [sec_hit(p, "איך מגישים תביעה?", 0.191, "secA", "א", 0),
+                sec_hit(p, "מה קורה לאחר הגשת התביעה?", 0.213, "secB", "ב", 1),
+                sec_hit(p, "מה קורה לאחר הגשת התביעה?", 0.231, "secB", "ג", 2)]    # same section_id, different text
+
+    def test_parts_of_one_section_become_one_group(self):
+        out = r.process_hits("מחלה קשה, מה לצרף לתביעה?", self.hits())
+        self.assertEqual([(g.section_id, g.size) for g in out.groups], [("secA", 1), ("secB", 2)])
+        self.assertEqual(out.groups[1].distance, 0.213)          # the closest part represents the group
+
+    def test_its_context_is_counted_once_in_the_total_cap(self):
+        out = r.process_hits("מחלה קשה, מה לצרף לתביעה?", self.hits())
+        parts = lambda sid: [part(n, 200, sid=sid, cid=f"{sid}{n}") for n in range(3)]    # noqa: E731
+        calls = []
+
+        def siblings(sid):
+            calls.append(sid)
+            return parts(sid)
+        r.expand_context(out.groups, siblings, max_section=600, max_total=1000)
+        self.assertEqual(calls, ["secA", "secB"])                  # one fetch per section, not per part
+        self.assertLessEqual(out.groups[0].context_words, 600)
+        self.assertLessEqual(out.groups[1].context_words, 1000 - out.groups[0].context_words + 5)
+        self.assertGreater(out.groups[1].context_words, 0)
+
+
+class TestLinkOnlyCap(unittest.TestCase):
+    def link_hit(self, n, dist):
+        h = hit(f"/health-insurance/l{n}/", f"קישור {n}", dist, body=f"הגשת תביעה (https://x.fnx.co.il/{n})", n=n)
+        return h
+
+    def test_is_link_only(self):
+        self.assertTrue(r.is_link_only(self.link_hit(1, 0.2)))
+        self.assertFalse(r.is_link_only(hit("/a/", "ארוך", 0.2)))                       # long
+        self.assertFalse(r.is_link_only(hit("/a/", "טלפון", 0.2, body="התקשרו 5432*")))  # short but no link
+
+    def test_at_most_two_link_only_groups_in_the_top_five(self):
+        hits = [self.link_hit(i, 0.20 + i / 100) for i in range(4)] +                [hit(f"/health-insurance/p{i}/", f"נושא {i}", 0.30 + i / 100, n=10 + i) for i in range(3)]
+        out = r.process_hits("שאלה בבריאות", hits)
+        self.assertEqual(len(out.groups), config.RETRIEVE_MAX_GROUPS)
+        self.assertEqual(sum(g.link_only for g in out.groups), config.RETRIEVE_MAX_LINK_ONLY)
+        self.assertEqual(out.pushed_down_link_only, 2)
+        self.assertEqual([g.link_only for g in out.groups[:2]], [True, True])           # the closest two stay, in order
+
+    def test_cap_does_not_remove_link_only_when_there_is_nothing_else(self):
+        out = r.process_hits("שאלה", [self.link_hit(i, 0.2 + i / 100) for i in range(4)])
+        self.assertEqual(len(out.groups), 2)                                              # only the allowed two remain
+
+
 if __name__ == "__main__":
     unittest.main()

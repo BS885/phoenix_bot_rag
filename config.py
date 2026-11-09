@@ -155,6 +155,7 @@ WAVES = {
 # --- retrieval (stage 5) ---
 RETRIEVE_FETCH = 10               # chunks pulled from the index per question
 RETRIEVE_MAX_GROUPS = 5           # groups passed on to the prompt
+RETRIEVE_MAX_LINK_ONLY = 2        # at most this many short link-only chunks among the top groups
 RETRIEVE_MIN_WORDS = 12           # a chunk body shorter than this is dropped ... (tunable: start 10-15)
 #                                   ... unless it has a digit or a link / address (phone, mail, url)
 RETRIEVE_GROUP_MIN_SIMILARITY = 0.6   # chunks share a group only if same topic + same section title AND their bodies

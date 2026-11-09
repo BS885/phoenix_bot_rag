@@ -68,6 +68,13 @@ def is_very_short(hit: dict, min_words: int | None = None) -> bool:
     return not (_HAS_DIGIT.search(body) or _HAS_LINK.search(body))
 
 
+def is_link_only(hit: dict, min_words: int | None = None) -> bool:
+    """A short body kept only because it holds a link (no other reason to be a good answer)."""
+    min_words = config.RETRIEVE_MIN_WORDS if min_words is None else min_words
+    body = _body(hit["text"])
+    return len(body.split()) < min_words and bool(_HAS_LINK.search(body))
+
+
 def _words(text: str) -> set[str]:
     return set(re.findall(r"\w+", text.lower()))
 
@@ -94,6 +101,7 @@ class Group:
     section_id: str = ""
     context: str = ""               # full section context (all parts by section_id), capped; filled by expand_context
     context_words: int = 0
+    link_only: bool = False         # a short chunk that is just a link
 
 
 @dataclass
@@ -104,7 +112,9 @@ class Retrieval:
     conflict_topics: list[str] = field(default_factory=list)
     product_miss: bool = False      # the question names a product and nothing in the results matches it
     dropped_short: int = 0
+    short_dropped: list = field(default_factory=list)   # [{"section", "url", "words", "distance"}] for reports
     dropped_other_product: int = 0
+    pushed_down_link_only: int = 0   # link-only groups beyond RETRIEVE_MAX_LINK_ONLY, moved out of the top groups
     fetched: int = 0
 
     def debug(self) -> dict:
@@ -132,6 +142,9 @@ def process_hits(question: str, hits: list[dict], *, min_words: int | None = Non
 
     kept = [h for h in hits if not is_very_short(h, min_words)]
     out.dropped_short = len(hits) - len(kept)
+    kept_ids = {id(h) for h in kept}
+    out.short_dropped = [{"section": h["section_title"], "url": h["url"], "words": len(_body(h["text"]).split()),
+                          "distance": h["distance"]} for h in hits if id(h) not in kept_ids]
     if not kept:               # never end up with nothing only because everything was short
         kept, out.dropped_short = hits[:1], len(hits) - min(len(hits), 1)
 
@@ -147,8 +160,9 @@ def process_hits(question: str, hits: list[dict], *, min_words: int | None = Non
     for h in kept:
         key = (h["topic"], _last_section(h["section_title"]))
         for g in groups:
-            if (g.topic, _last_section(g.section_title)) == key and \
-                    _similarity(_body(g.text), _body(h["text"])) >= config.RETRIEVE_GROUP_MIN_SIMILARITY:
+            same_section = bool(h.get("section_id")) and g.section_id == h.get("section_id")   # parts of one section
+            if same_section or ((g.topic, _last_section(g.section_title)) == key and
+                                _similarity(_body(g.text), _body(h["text"])) >= config.RETRIEVE_GROUP_MIN_SIMILARITY):
                 g.size += 1
                 for s in [_source(h)] + [{"title": "", "url": u, "anchor": ""} for u in h.get("dup_urls", "").split("|") if u]:
                     if s["url"] not in {x["url"] for x in g.sources}:
@@ -159,8 +173,18 @@ def process_hits(question: str, hits: list[dict], *, min_words: int | None = Non
             groups.append(Group(text=h["text"], url=h["url"], anchor=h.get("anchor", ""), page_title=h["page_title"],
                                 section_title=h["section_title"], topic=h["topic"], topic_name=topic_name(h["topic"]),
                                 distance=h["distance"], short=bool(h.get("short")), sources=sources,
-                                chunk_id=h.get("id", ""), section_id=h.get("section_id", "")))
-    out.groups = groups[:max_groups]
+                                chunk_id=h.get("id", ""), section_id=h.get("section_id", ""),
+                                link_only=is_link_only(h, min_words)))
+    top, links = [], 0
+    for g in groups:      # at most RETRIEVE_MAX_LINK_ONLY link-only groups among the first max_groups
+        if len(top) >= max_groups:
+            break
+        if g.link_only and links >= config.RETRIEVE_MAX_LINK_ONLY:
+            out.pushed_down_link_only += 1
+            continue
+        links += g.link_only
+        top.append(g)
+    out.groups = top
 
     if not detected and out.groups:
         best = out.groups[0].distance
