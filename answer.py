@@ -6,15 +6,13 @@ Flow (1-2 model calls per question; a failed citation check may add one retry):
   2. guardrails        greeting / personal / advice are answered here with fixed texts: no search, no answer call
   3. retrieve          groups of chunks (a product named earlier in the conversation is inherited)
   4. answer call       prompt.py -> llm.generate -> JSON
-  5. verification      verify.py: citations and numbers/links, in code
-       no valid citation       -> ONE retry with a note ("copy the quote word for word"); still invalid -> not_found
-       unsupported values      -> the WHOLE sentence holding the value is removed; if no remaining sentence is backed by a
-                                  valid citation -> not_found, else partial + a fixed note
+  5. verification      verify.verify_claims: every claim (text + source + quote) is checked on its own
+       no valid claim          -> ONE retry with a note ("copy the quote word for word"); still none -> not_found
+       some claims failed      -> those claims are removed whole; the others stay: partial + a fixed note
   6. statuses          answered, partial, not_found, out_of_scope, personal, advice, greeting, clarify, error
 Fixed texts and caveats come from config.py. A quota error or any model failure is "error", never "not_found".
 Sources (title + url + anchor) are taken from the chunks in code; the model only gives source numbers.
 """
-import re
 from dataclasses import dataclass, field
 
 import config
@@ -38,50 +36,6 @@ class BotReply:
 
 # ---------- small pure helpers (tested directly) ----------
 
-_SPLIT = re.compile(r"((?<=[.!?])\s+|\n+)")
-
-
-def split_sentences(text: str) -> list[tuple[str, str]]:
-    """[(sentence, separator that followed it)]"""
-    parts = _SPLIT.split(text.strip())
-    out = []
-    for i in range(0, len(parts), 2):
-        sentence = parts[i]
-        sep = parts[i + 1] if i + 1 < len(parts) else ""
-        if sentence.strip():
-            out.append((sentence, sep))
-    return out
-
-
-def remove_sentences_with(text: str, bad_numbers: list[str], bad_links: list[str]) -> tuple[str, list[str]]:
-    """Drops every WHOLE sentence that holds one of the unsupported values. Returns (new text, removed sentences)."""
-    bad_n, bad_l = set(bad_numbers), set(bad_links)
-    kept, removed = [], []
-    for sentence, sep in split_sentences(text):
-        vals = verify.extract_values(sentence)
-        if (set(vals["numbers"]) & bad_n) or (set(vals["links"]) & bad_l) or (set(vals["emails"]) & bad_l):
-            removed.append(sentence)
-        else:
-            kept.append((sentence, sep))
-    text_out = ""
-    for i, (sentence, sep) in enumerate(kept):
-        text_out += sentence + (sep if i < len(kept) - 1 else "")
-    return text_out.strip(), removed
-
-
-def backed_sentences(text: str, cited_texts: list[str]) -> list[str]:
-    """The sentences of `text` whose words (mostly) appear in the validly cited sources."""
-    pool = set()
-    for t in cited_texts:
-        pool.update(verify.words(t))
-    out = []
-    for sentence, _ in split_sentences(text):
-        ws = [w for w in verify.words(sentence) if len(w) > 1]
-        if ws and sum(w in pool for w in ws) / len(ws) >= config.ANSWER_SUPPORT_MIN_RATIO:
-            out.append(sentence)
-    return out
-
-
 def _unique_sources(prompt_sources: list[dict], used: list[int]) -> list[dict]:
     out, seen = [], set()
     for s in prompt_sources:
@@ -93,6 +47,11 @@ def _unique_sources(prompt_sources: list[dict], used: list[int]) -> list[dict]:
                 seen.add(key)
                 out.append({"title": src.get("title") or s["title"], "url": src["url"], "anchor": src.get("anchor", "")})
     return out
+
+
+def _verify_debug(res) -> dict:
+    return {"valid": len(res.valid), "dropped": len(res.dropped), "used_sources": res.used_sources,
+            "claims": [(c.n, c.ok, c.reason, c.note) for c in res.claims]}
 
 
 def _join_options(names: list[str]) -> str:
@@ -178,14 +137,13 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
     if reply.get("is_personal") and not reply.get("found"):
         text, sources = guardrails.personal_reply()
         return BotReply("personal", text, sources=sources, debug=debug)
-    if not reply.get("found") or not str(reply.get("answer", "")).strip():
+    if not reply.get("found") or not (reply.get("claims") or []):
         return BotReply("not_found", config.NOT_FOUND_TEXT, debug=debug)
 
-    # 5. verification (+ one retry when no citation is valid)
-    check = verify.verify(reply["answer"], reply.get("citations") or [], built.sources)
-    debug["verify"] = {"hint": check.hint, "used_sources": check.used_sources,
-                       "citations": [(c.n, c.ok, c.reason) for c in check.citations]}
-    if not check.has_valid_citation:
+    # 5. verification, claim by claim (+ one retry when no claim is valid)
+    res = verify.verify_claims(reply.get("claims") or [], built.sources)
+    debug["verify"] = _verify_debug(res)
+    if not res.valid:
         try:
             reply = call(built.user + "\n\n" + config.CITATION_RETRY_NOTE, built)
         except llm.LLMError as exc:
@@ -193,24 +151,19 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
         debug["retried_citation"] = True
         if reply.get("out_of_scope") or not reply.get("found"):
             return BotReply("not_found", config.NOT_FOUND_TEXT, debug=debug)
-        check = verify.verify(reply.get("answer", ""), reply.get("citations") or [], built.sources)
-        debug["verify_retry"] = {"hint": check.hint, "used_sources": check.used_sources,
-                                 "citations": [(c.n, c.ok, c.reason) for c in check.citations]}
-        if not check.has_valid_citation:
+        res = verify.verify_claims(reply.get("claims") or [], built.sources)
+        debug["verify_retry"] = _verify_debug(res)
+        if not res.valid:
             return BotReply("not_found", config.NOT_FOUND_TEXT, debug=debug)
 
-    text = str(reply["answer"]).strip()
+    text = " ".join(c.final_text for c in res.valid)
     missing = str(reply.get("missing", "") or "").strip()
     status = "partial" if missing else "answered"
-    if check.unsupported_numbers or check.unsupported_links:
-        text, removed = remove_sentences_with(text, check.unsupported_numbers, check.unsupported_links)
-        debug["removed_sentences"] = removed
-        cited = [s["text"] for s in built.sources if s["n"] in check.used_sources]
-        if not text or not backed_sentences(text, cited):
-            return BotReply("not_found", config.NOT_FOUND_TEXT, debug=debug)
+    if res.dropped:                       # a claim that failed verification is removed whole; the rest stays
+        debug["removed_claims"] = [{"text": c.text, "reason": c.reason, "note": c.note} for c in res.dropped]
         text += "\n\n" + config.PARTIAL_REMOVED_NOTE
         status = "partial"
 
     text, coverage = _caveats(text, guard, bool(reply.get("is_coverage")))
-    return BotReply(status, text, sources=_unique_sources(built.sources, check.used_sources),
+    return BotReply(status, text, sources=_unique_sources(built.sources, res.used_sources),
                     is_coverage=coverage, missing=missing, debug=debug)

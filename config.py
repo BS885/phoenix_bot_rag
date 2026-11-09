@@ -155,6 +155,8 @@ WAVES = {
 # --- retrieval (stage 5) ---
 RETRIEVE_FETCH = 10               # chunks pulled from the index per question
 RETRIEVE_MAX_GROUPS = 5           # groups passed on to the prompt
+CLAIM_WORDS = ("תביעה", "להגיש", "לצרף", "טופס", "החזר")   # a question with one of these ranks claim pages (area=claims) higher
+CLAIMS_AREA_BONUS = 0.03          # ranking bonus (as if closer) for claim pages, only with a claim word in the question
 RETRIEVE_MAX_LINK_ONLY = 2        # at most this many short link-only chunks among the top groups
 RETRIEVE_MIN_WORDS = 12           # a chunk body shorter than this is dropped ... (tunable: start 10-15)
 #                                   ... unless it has a digit or a link / address (phone, mail, url)
@@ -301,5 +303,4 @@ ERROR_TEXT = "אירעה תקלה זמנית ולא ניתן היה לענות �
 ERROR_QUOTA_TEXT = "השירות עמוס כרגע או שהגענו למכסת השימוש. אפשר לנסות שוב מאוחר יותר."
 ERROR_QUOTA_DAILY_TEXT = "הגענו למכסת השימוש היומית. אפשר לנסות שוב מחר."
 CITATION_RETRY_NOTE = "הערה: הציטוט חייב להיות מועתק מילה במילה מהמקור, בלי קיצור."
-ANSWER_SUPPORT_MIN_RATIO = 0.5       # a remaining sentence counts as "backed by a valid citation" when this share of its
-                                     # words appears in the validly cited sources (after unverifiable sentences are removed)
+CLAIM_MIN_OVERLAP = 0.3              # a claim's text must share at least this share of word stems with its quote (verify.overlap)

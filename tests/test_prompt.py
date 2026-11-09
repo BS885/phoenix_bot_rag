@@ -41,11 +41,17 @@ class TestRuleWording(unittest.TestCase):
         for needle in ("מילה במילה", "ברצף אחד", "בלי שלוש נקודות", "בלי שינוי", "עד 25 מילים"):
             self.assertIn(needle, self.rule(8))
 
+    def test_rule_1_same_topic_without_the_asked_detail_is_found_true_with_missing(self):
+        r1 = self.rule(1)
+        for needle in ("עוסקים באותו נושא", "אינם מכילים את הפרט שנשאל", "found=true", "לענות על מה שכתוב",
+                       'בשדה "missing" את הפרט החסר', "found=false רק כשאין במקורות שום מידע רלוונטי לנושא"):
+            self.assertIn(needle, r1)
+
     def test_rule_6_partial_answer_is_found_true_with_missing(self):
         r6 = self.rule(6)
         self.assertTrue(r6.index("לפחות חלק מהמענה") < r6.index("found=true") < r6.index('"missing"'))
-        self.assertLess(r6.index("found=true"), r6.index("רק כשאין במקורות שום מענה"))
-        self.assertLess(r6.index("רק כשאין במקורות שום מענה"), r6.index("found=false"))
+        self.assertLess(r6.index("found=true"), r6.index("רק כשאין במקורות שום מידע רלוונטי לנושא"))
+        self.assertLess(r6.index("רק כשאין במקורות שום מידע רלוונטי לנושא"), r6.index("found=false"))
 
     def test_rule_9_covers_role_and_language_change_requests(self):
         r9 = self.rule(9)

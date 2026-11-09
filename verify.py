@@ -151,3 +151,146 @@ def verify(answer: str, citations: list[dict], sources: list[dict]) -> Verificat
         if mail not in have_emails:
             out.unsupported_links.append(mail)
     return out
+
+
+# ---------- claims: one claim = text + source + quote (stage 5.4b) ----------
+
+_PREFIX_LETTERS = "והבלמשכ"
+# Second-person singular forms (only these; ordinary words that happen to end in a final kaf - "צורך", "תהליך", "תאריך",
+# "דרך" - are NOT singular forms). A form is also recognised after one or two prefix letters ("שברשותך", "ולך").
+_SINGULAR_FORMS = {"עליך", "אליך", "בפניך", "לפניך", "מפניך", "אחריך", "שלך", "לך", "אותך", "אתך", "איתך", "עמך", "עימך",
+                   "ממך", "בך", "אצלך", "ברשותך", "בעבורך", "בשבילך", "מידך", "בידך", "ידך", "תחתיך", "לידך", "אתה", "הנך",
+                   "הינך", "תוכל", "תוכלי", "ביכולתך", "פנייתך", "בקשתך", "תביעתך", "פוליסתך", "חשבונך", "זכותך", "זכאותך"}
+LINK_ONLY_MAX_WORDS = 6        # a source body with at most this many words outside links is a "heading + link" source
+
+
+def stem(word: str) -> str:
+    """Crude Hebrew stem for overlap: one leading prefix letter is dropped from words of 4+ letters."""
+    return word[1:] if len(word) >= 4 and word[0] in _PREFIX_LETTERS else word
+
+
+def content_words(text: str) -> list[str]:
+    return [stem(w) for w in words(text) if len(w) > 1]
+
+
+def overlap(text: str, quote: str) -> float:
+    """Shared stems / the smaller of the two stem sets (0 when either is empty)."""
+    tw, qw = set(content_words(text)), set(content_words(quote))
+    if not tw or not qw:
+        return 0.0
+    return len(tw & qw) / min(len(tw), len(qw))
+
+
+def singular_forms(text: str) -> list[str]:
+    """Second-person singular forms in a claim text ('עליך', 'בפניך', 'שברשותך', 'אתה' ...). Only a quote may copy them."""
+    found = []
+    for w in words(text):
+        candidates = {w, w[1:] if len(w) > 2 and w[0] in _PREFIX_LETTERS else w,
+                      w[2:] if len(w) > 3 and w[0] in _PREFIX_LETTERS and w[1] in _PREFIX_LETTERS else w}
+        if candidates & _SINGULAR_FORMS:
+            found.append(w)
+    return found
+
+
+def _unsupported(text: str, source_text: str) -> tuple[list[str], list[str]]:
+    """(numbers, links+emails) of `text` that do not appear in `source_text`."""
+    have = extract_values(source_text)
+    have_numbers = set(have["numbers"])
+    have_digits = {_digits(x) for x in have_numbers if len(_digits(x)) >= 7}
+    have_links = {u.removeprefix("https://").removeprefix("http://") for u in have["links"]}
+    have_emails = set(have["emails"])
+    want = extract_values(text)
+    bad_n = [n for n in dict.fromkeys(want["numbers"])
+             if not (n in have_numbers or (len(_digits(n)) >= 7 and _digits(n) in have_digits))]
+    bad_l = [u for u in dict.fromkeys(want["links"]) if u.removeprefix("https://").removeprefix("http://") not in have_links]
+    bad_l += [m for m in dict.fromkeys(want["emails"]) if m not in have_emails]
+    return bad_n, bad_l
+
+
+def is_link_only(source_text: str) -> bool:
+    """A source that is just a heading + link(s): few words once the links are taken out."""
+    rest = _URL.sub(" ", source_text)
+    return bool(_URL.search(source_text)) and len(words(rest)) <= LINK_ONLY_MAX_WORDS
+
+
+@dataclass
+class ClaimResult:
+    text: str
+    n: int
+    quote: str
+    ok: bool
+    source: int = 0
+    reason: str = ""
+    note: str = ""
+    final_text: str = ""        # text as shown (a link of a heading+link source is appended when the claim has none)
+
+
+@dataclass
+class ClaimsVerification:
+    claims: list[ClaimResult] = field(default_factory=list)
+
+    @property
+    def valid(self) -> list[ClaimResult]:
+        return [c for c in self.claims if c.ok]
+
+    @property
+    def dropped(self) -> list[ClaimResult]:
+        return [c for c in self.claims if not c.ok]
+
+    @property
+    def used_sources(self) -> list[int]:
+        return sorted({c.source for c in self.valid})
+
+
+def verify_claims(claims: list[dict], sources: list[dict], *, min_overlap: float | None = None) -> ClaimsVerification:
+    """Each claim is checked on its own: quote verbatim in its source (a heading+link source may be quoted by its title),
+    enough word overlap between text and quote, no second-person singular in the text, and every number / phone / link
+    of the text in the quote or in the source text. A failing claim is dropped; the others stay."""
+    import config
+    min_overlap = config.CLAIM_MIN_OVERLAP if min_overlap is None else min_overlap
+    by_n = {s["n"]: s["text"] for s in sources}
+    source_words = {n: words(t) for n, t in by_n.items()}
+    link_only = {n for n, t in by_n.items() if is_link_only(t)}
+    title_words = {s["n"]: [words(s.get("section", "")), words(s.get("title", "")),
+                            words(f"{s.get('title', '')} {s.get('section', '')}")] for s in sources}
+    out = ClaimsVerification()
+    seen = set()
+    for c in claims or []:
+        if not isinstance(c, dict):
+            continue
+        text = str(c.get("text", "") or "").strip()
+        quote = str(c.get("quote", "") or "")
+        try:
+            n = int(c.get("source"))
+        except (TypeError, ValueError):
+            out.claims.append(ClaimResult(text, 0, quote, False, reason="bad_source_number"))
+            continue
+        if not text:
+            out.claims.append(ClaimResult(text, n, quote, False, reason="empty_text"))
+            continue
+        if text in seen:
+            continue
+        seen.add(text)
+        chk = check_citation(n, quote, source_words)
+        if not chk.ok and n in link_only and not _ELLIPSIS.search(quote):      # a heading+link source: the title is the quote
+            qw = words(quote)
+            if qw and any(_contains_run(tw, qw) for tw in title_words.get(n, [])):
+                chk = Check(n, quote, True, source=n, note="quote is the title of a heading+link source")
+        if not chk.ok:
+            out.claims.append(ClaimResult(text, n, quote, False, reason=chk.reason))
+            continue
+        res = ClaimResult(text, n, quote, True, source=chk.source, note=chk.note, final_text=text)
+        sing = singular_forms(text)
+        if sing:
+            res.ok, res.reason, res.note = False, "singular_form", ", ".join(sing)
+        elif overlap(text, quote) < min_overlap:
+            res.ok, res.reason, res.note = False, "low_overlap", f"{overlap(text, quote):.2f} < {min_overlap}"
+        else:
+            bad_n, bad_l = _unsupported(text, by_n[chk.source])
+            if bad_n or bad_l:
+                res.ok, res.reason, res.note = False, "unsupported_value", ", ".join(bad_n + bad_l)
+        if res.ok and chk.source in link_only and not _URL.search(text):          # the link comes from the source
+            link = _URL.search(by_n[chk.source]).group(0).rstrip(".,;:!?")
+            res.final_text = f"{text} ({link})"
+        out.claims.append(res)
+    return out

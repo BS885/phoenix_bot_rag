@@ -235,5 +235,38 @@ class TestLinkOnlyCap(unittest.TestCase):
         self.assertEqual(len(out.groups), 2)                                              # only the allowed two remain
 
 
+class TestClaimsAreaBonus(unittest.TestCase):
+    def hits(self):
+        prod = sec_hit("/health-insurance/extra-covers/a/", "מה כולל", 0.200, "p1", "א", 0)
+        prod["area"] = "product"
+        claim = sec_hit("/claims-customer-service/claims-health-insurance/b/", "איך מגישים", 0.215, "c1", "ב", 1)
+        claim["area"] = "claims"
+        return [prod, claim]
+
+    def order(self, q, **kw):
+        return [g.section_title for g in r.process_hits(q, [dict(h) for h in self.hits()], **kw).groups]
+
+    def test_claim_words(self):
+        for q in ("איך מגישים תביעה?", "מה לצרף?", "איפה הטופס", "מה ההחזר על דיקור?", "אפשר להגיש בקשה?"):
+            self.assertTrue(r.has_claim_word(q), q)
+        for q in ("איך מצטרפים לקרן השתלמות?", "מה זה כיסוי אמבולטורי?", "מה שער הדולר היום?"):
+            self.assertFalse(r.has_claim_word(q), q)
+
+    def test_with_a_claim_word_the_claim_page_ranks_first_but_keeps_its_real_distance(self):
+        out = r.process_hits("איך מגישים תביעה?", [dict(h) for h in self.hits()])
+        self.assertEqual([g.section_title for g in out.groups], ["איך מגישים", "מה כולל"])
+        self.assertEqual(out.groups[0].distance, 0.215)
+
+    def test_without_a_claim_word_nothing_changes(self):
+        self.assertEqual(self.order("איך מצטרפים לקרן השתלמות?"), ["מה כולל", "איך מגישים"])
+
+    def test_bonus_can_be_switched_off_and_a_big_gap_is_not_overturned(self):
+        self.assertEqual(self.order("איך מגישים תביעה?", claims_bonus=0.0), ["מה כולל", "איך מגישים"])
+        far = self.hits()
+        far[1]["distance"] = 0.30
+        out = r.process_hits("איך מגישים תביעה?", [dict(h) for h in far])
+        self.assertEqual(out.groups[0].section_title, "מה כולל")
+
+
 if __name__ == "__main__":
     unittest.main()

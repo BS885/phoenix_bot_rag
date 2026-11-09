@@ -130,11 +130,20 @@ def _source(hit: dict) -> dict:
     return {"title": hit["page_title"], "url": hit["url"], "anchor": hit.get("anchor", "")}
 
 
+def has_claim_word(question: str) -> bool:
+    """A claim word (config.CLAIM_WORDS) in the question: only then do claim pages get the ranking bonus."""
+    q = question.lower()
+    return any(w in q for w in config.CLAIM_WORDS)
+
+
 def process_hits(question: str, hits: list[dict], *, min_words: int | None = None,
-                 max_groups: int | None = None, products: list[str] | None = None) -> Retrieval:
+                 max_groups: int | None = None, products: list[str] | None = None,
+                 claims_bonus: float | None = None) -> Retrieval:
     """Everything after the vector search; pure, so it is testable without an index."""
     max_groups = max_groups or config.RETRIEVE_MAX_GROUPS
-    hits = sorted(hits, key=lambda h: h["distance"])
+    bonus = (config.CLAIMS_AREA_BONUS if claims_bonus is None else claims_bonus) if has_claim_word(question) else 0.0
+    # ranking only: a claim page ("area" = claims) is ranked as if it were `bonus` closer; the distance shown stays real
+    hits = sorted(hits, key=lambda h: h["distance"] - (bonus if h.get("area") == "claims" else 0.0))
     for h in hits:
         h["topic"] = topic_of(h["url"])
     detected = detect_products(question) or list(products or [])   # a product inherited from the conversation
@@ -187,7 +196,7 @@ def process_hits(question: str, hits: list[dict], *, min_words: int | None = Non
     out.groups = top
 
     if not detected and out.groups:
-        best = out.groups[0].distance
+        best = min(g.distance for g in out.groups)
         strong = [g for g in out.groups if g.topic != "general"
                   and g.distance <= best + config.RETRIEVE_CLARIFY_DELTA
                   and g.distance <= config.RETRIEVE_CLARIFY_MAX_DISTANCE]
