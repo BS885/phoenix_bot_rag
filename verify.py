@@ -192,6 +192,18 @@ def singular_forms(text: str) -> list[str]:
     return found
 
 
+def _has_word(token_list: list[str], word: str) -> bool:
+    return any(t == word or (len(t) > 2 and t[0] in _PREFIX_LETTERS and t[1:] == word) for t in token_list)
+
+
+def strength_words_added(text: str, quote: str) -> list[str]:
+    """Strength words ('מומלץ', 'כדאי') in a claim text that are not in its quote: the claim would be softer / stronger
+    than the source ('יש למלא' must not become 'מומלץ למלא')."""
+    import config
+    tw, qw = words(text), words(quote)
+    return [w for w in config.CLAIM_STRENGTH_WORDS if _has_word(tw, w) and not _has_word(qw, w)]
+
+
 def _unsupported(text: str, source_text: str) -> tuple[list[str], list[str]]:
     """(numbers, links+emails) of `text` that do not appear in `source_text`."""
     have = extract_values(source_text)
@@ -281,7 +293,10 @@ def verify_claims(claims: list[dict], sources: list[dict], *, min_overlap: float
             continue
         res = ClaimResult(text, n, quote, True, source=chk.source, note=chk.note, final_text=text)
         sing = singular_forms(text)
-        if sing:
+        soft = strength_words_added(text, quote)
+        if soft:
+            res.ok, res.reason, res.note = False, "strength_word", ", ".join(soft)
+        elif sing:
             res.ok, res.reason, res.note = False, "singular_form", ", ".join(sing)
         elif overlap(text, quote) < min_overlap:
             res.ok, res.reason, res.note = False, "low_overlap", f"{overlap(text, quote):.2f} < {min_overlap}"

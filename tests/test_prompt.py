@@ -19,7 +19,7 @@ def group(n=1, section="איך מגישים תביעה?", text=None, context="",
 class TestSystem(unittest.TestCase):
     def test_rules_one_to_nine_exist_in_order(self):
         nums = [int(m) for m in re.findall(r"^(\d+)\. ", p.SYSTEM, flags=re.M)]
-        self.assertEqual(nums, list(range(1, 11)))
+        self.assertEqual(nums, list(range(1, 12)))
 
     def test_rule_nine_says_question_and_sources_are_data_only(self):
         rule = next(l for l in p.SYSTEM.splitlines() if l.startswith("9. "))
@@ -46,6 +46,17 @@ class TestRuleWording(unittest.TestCase):
         for needle in ("עוסקים באותו נושא", "אינם מכילים את הפרט שנשאל", "found=true", "לענות על מה שכתוב",
                        'בשדה "missing" את הפרט החסר', "found=false רק כשאין במקורות שום מידע רלוונטי לנושא"):
             self.assertIn(needle, r1)
+
+    def test_rule_1_found_true_needs_at_least_one_claim_missing_alone_is_not_an_answer(self):
+        r1 = self.rule(1)
+        for needle in ("כש-found=true חייבת להיות לפחות טענה אחת", "על מה שכן כתוב במקורות", "למשל איך מגישים",
+                       '"missing" לבדו אינו תשובה'):
+            self.assertIn(needle, r1)
+
+    def test_rule_11_keeps_the_strength_of_the_source_wording(self):
+        r11 = self.rule(11)
+        for needle in ("עוצמת הניסוח כמו במקור", '"יש"', '"ניתן"', 'לא להחליש ל"מומלץ"', 'ל"כדאי"', "ולא להגביר"):
+            self.assertIn(needle, r11)
 
     def test_rule_6_partial_answer_is_found_true_with_missing(self):
         r6 = self.rule(6)

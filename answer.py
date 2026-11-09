@@ -137,18 +137,22 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
     if reply.get("is_personal") and not reply.get("found"):
         text, sources = guardrails.personal_reply()
         return BotReply("personal", text, sources=sources, debug=debug)
-    if not reply.get("found") or not (reply.get("claims") or []):
+    if not reply.get("found"):
         return BotReply("not_found", config.NOT_FOUND_TEXT, debug=debug)
 
-    # 5. verification, claim by claim (+ one retry when no claim is valid)
-    res = verify.verify_claims(reply.get("claims") or [], built.sources)
+    # 5. verification, claim by claim. ONE retry when there is no claim at all ("found" without claims; "missing" alone is
+    #    not an answer) or no claim survives verification; it carries a note that says which of the two it was.
+    claims = reply.get("claims") or []
+    res = verify.verify_claims(claims, built.sources)
     debug["verify"] = _verify_debug(res)
     if not res.valid:
+        note = config.CITATION_RETRY_NOTE if claims else config.CLAIM_REQUIRED_NOTE
         try:
-            reply = call(built.user + "\n\n" + config.CITATION_RETRY_NOTE, built)
+            reply = call(built.user + "\n\n" + note, built)
         except llm.LLMError as exc:
             return _error(exc, debug)
         debug["retried_citation"] = True
+        debug["retry_reason"] = "no_claims" if not claims else "no_valid_claim"
         if reply.get("out_of_scope") or not reply.get("found"):
             return BotReply("not_found", config.NOT_FOUND_TEXT, debug=debug)
         res = verify.verify_claims(reply.get("claims") or [], built.sources)

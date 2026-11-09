@@ -163,10 +163,34 @@ class TestNoValidClaim(unittest.TestCase):
         out, _ = run(q, Gen(reply(bad), reply(bad)))
         self.assertEqual((out.status, out.sources), ("not_found", []))
 
-    def test_found_but_no_claims_at_all_is_not_found_without_a_retry(self):
-        gen = Gen({**reply(), "claims": []})
+    def test_found_without_claims_gets_one_retry_with_the_claim_required_note(self):
+        gen = Gen({**reply(), "claims": [], "missing": "לא כתוב אילו מסמכים לצרף"}, reply())
         out, _ = run(Q, gen)
-        self.assertEqual((out.status, len(gen.calls)), ("not_found", 1))
+        self.assertEqual((out.status, len(gen.calls)), ("answered", 2))
+        self.assertIn(config.CLAIM_REQUIRED_NOTE, gen.calls[1]["prompt"])
+        self.assertNotIn(config.CITATION_RETRY_NOTE, gen.calls[1]["prompt"])
+        self.assertEqual(out.debug["retry_reason"], "no_claims")
+
+    def test_found_without_claims_twice_is_not_found_and_missing_is_not_turned_into_a_partial_answer(self):
+        empty_claims = {**reply(), "claims": [], "missing": "לא כתוב אילו מסמכים לצרף"}
+        out, _ = run(Q, Gen(empty_claims, dict(empty_claims)))
+        self.assertEqual((out.status, out.text, out.debug["calls"]), ("not_found", config.NOT_FOUND_TEXT, 2))
+        self.assertEqual(out.missing, "")
+
+    def test_the_two_retry_notes_say_what_is_required(self):
+        self.assertEqual(config.CLAIM_REQUIRED_NOTE, "הערה: חובה לפחות טענה אחת עם ציטוט מילה במילה.")
+        gen = Gen(reply(claim(quote="לא קיים")), reply())
+        run(Q, gen)
+        self.assertIn(config.CITATION_RETRY_NOTE, gen.calls[1]["prompt"])
+
+    def test_a_softened_claim_is_removed_and_the_stronger_one_stays(self):
+        hits = [hit(body="יש להגיש את הטופס עד סוף החודש. ניתן לפנות גם בטלפון 3455* בשעות העבודה של המוקד הארצי.")]
+        gen = Gen(reply(claim("מומלץ להגיש את הטופס עד סוף החודש.", "יש להגיש את הטופס עד סוף החודש"),
+                        claim("ניתן לפנות גם בטלפון 3455*.", "ניתן לפנות גם בטלפון 3455*")))
+        out, _ = run(Q, gen, hits=hits)
+        self.assertEqual(out.status, "partial")
+        self.assertNotIn("מומלץ", out.text)
+        self.assertEqual(out.debug["removed_claims"][0]["reason"], "strength_word")
 
     def test_a_failure_in_the_retry_is_an_error_not_not_found(self):
         out, _ = run(Q, Gen(reply(claim(quote="לא קיים")), llm.LLMError("down")))
@@ -176,12 +200,12 @@ class TestNoValidClaim(unittest.TestCase):
 class TestClaimsFailOneByOne(unittest.TestCase):
     def test_a_claim_with_an_invented_number_is_removed_whole_and_the_answer_is_partial_with_the_note(self):
         gen = Gen(reply(claim(),
-                         claim("הטיפול נמשך עד 45 ימי עבודה ולכן כדאי לחכות.", "הטיפול בתביעה נמשך עד 30 ימי עבודה"),
+                         claim("הטיפול נמשך עד 45 ימי עבודה ולכן יש להמתין.", "הטיפול בתביעה נמשך עד 30 ימי עבודה"),
                          claim("אפשר לפנות בטלפון 3455*.", "ניתן לפנות גם בטלפון 3455* בשעות העבודה")))
         out, _ = run(Q, gen)
         self.assertEqual(out.status, "partial")
         self.assertNotIn("45 ימי", out.text)
-        self.assertNotIn("כדאי לחכות", out.text)
+        self.assertNotIn("יש להמתין", out.text)
         self.assertIn("יש למלא את הטופס באתר.", out.text)
         self.assertIn("3455*", out.text)
         self.assertTrue(out.text.endswith(config.PARTIAL_REMOVED_NOTE))

@@ -83,6 +83,31 @@ class TestValuesInTheClaimText(unittest.TestCase):
         self.assertEqual(got.reason, "unsupported_value")
 
 
+class TestStrengthWords(unittest.TestCase):
+    SRC = [{"n": 1, "text": "יש להגיש את הטופס עד סוף החודש. מומלץ לצרף אישור רפואי כדי להקל על הטיפול בתביעה.",
+            "section": "x", "title": "y"}]
+
+    def one(self, text, quote):
+        return v.verify_claims([c(text, quote)], self.SRC).claims[0]
+
+    def test_a_softened_claim_is_removed(self):
+        got = self.one("מומלץ להגיש את הטופס עד סוף החודש", "יש להגיש את הטופס עד סוף החודש")
+        self.assertEqual((got.ok, got.reason, got.note), (False, "strength_word", "מומלץ"))
+        got2 = self.one("כדאי להגיש את הטופס עד סוף החודש", "יש להגיש את הטופס עד סוף החודש")
+        self.assertEqual((got2.ok, got2.reason), (False, "strength_word"))
+
+    def test_the_word_in_the_quote_makes_it_fine_even_with_a_prefix(self):
+        self.assertTrue(self.one("מומלץ לצרף אישור רפואי", "מומלץ לצרף אישור רפואי כדי להקל").ok)
+        self.assertTrue(self.one("ומומלץ לצרף אישור רפואי", "מומלץ לצרף אישור רפואי כדי להקל").ok)
+
+    def test_claims_without_those_words_are_untouched(self):
+        self.assertTrue(self.one("יש להגיש את הטופס עד סוף החודש", "יש להגיש את הטופס עד סוף החודש").ok)
+        self.assertEqual(v.strength_words_added("ניתן להגיש", "ניתן להגיש"), [])
+
+    def test_the_words_live_in_config(self):
+        self.assertEqual(set(config.CLAIM_STRENGTH_WORDS), {"מומלץ", "כדאי"})
+
+
 class TestHeadingAndLinkSources(unittest.TestCase):
     def test_detection(self):
         self.assertTrue(v.is_link_only(LINK_SRC))
