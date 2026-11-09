@@ -90,6 +90,10 @@ class Group:
     short: bool
     sources: list[dict] = field(default_factory=list)   # [{"title", "url", "anchor"}], closest first
     size: int = 1                   # chunks merged into this group
+    chunk_id: str = ""              # the representative chunk
+    section_id: str = ""
+    context: str = ""               # full section context (all parts by section_id), capped; filled by expand_context
+    context_words: int = 0
 
 
 @dataclass
@@ -154,7 +158,8 @@ def process_hits(question: str, hits: list[dict], *, min_words: int | None = Non
             sources = [_source(h)] + [{"title": "", "url": u, "anchor": ""} for u in h.get("dup_urls", "").split("|") if u]
             groups.append(Group(text=h["text"], url=h["url"], anchor=h.get("anchor", ""), page_title=h["page_title"],
                                 section_title=h["section_title"], topic=h["topic"], topic_name=topic_name(h["topic"]),
-                                distance=h["distance"], short=bool(h.get("short")), sources=sources))
+                                distance=h["distance"], short=bool(h.get("short")), sources=sources,
+                                chunk_id=h.get("id", ""), section_id=h.get("section_id", "")))
     out.groups = groups[:max_groups]
 
     if not detected and out.groups:
@@ -166,6 +171,55 @@ def process_hits(question: str, hits: list[dict], *, min_words: int | None = Non
         if len(topics) >= 2:
             out.product_conflict, out.conflict_topics = True, topics
     return out
+
+
+# ---------- full context by section_id ----------
+
+def _nwords(text: str) -> int:
+    return len(text.split())
+
+
+def _strip_head(text: str) -> str:
+    """Parts after the first repeat the 'page > section' header line; drop it."""
+    return text.split("\n", 1)[1] if "\n" in text else text
+
+
+def section_context(found: dict, siblings: list[dict], max_words: int) -> tuple[str, int]:
+    """All parts of one section in page order, capped at max_words. The found chunk is always kept; when the section
+    is longer, parts nearest to the found chunk are added first. Returns (text, words)."""
+    parts = {s["id"]: s for s in siblings}
+    parts.setdefault(found["id"], found)
+    order = sorted(parts.values(), key=lambda s: (s.get("chunk_no", 0), s["id"]))
+    pos = next(i for i, s in enumerate(order) if s["id"] == found["id"])
+    chosen, total = {pos}, _nwords(order[pos]["text"])
+    for i in sorted((i for i in range(len(order)) if i != pos), key=lambda i: (abs(i - pos), i)):
+        w = _nwords(_strip_head(order[i]["text"]))
+        if total + w > max_words:
+            break               # keep the chosen parts contiguous around the found chunk
+        chosen.add(i)
+        total += w
+    first = True
+    texts = []
+    for i in sorted(chosen):
+        texts.append(order[i]["text"] if first else _strip_head(order[i]["text"]))
+        first = False
+    return "\n".join(texts), total
+
+
+def expand_context(groups: list[Group], fetch_siblings, *, max_section: int | None = None,
+                   max_total: int | None = None) -> None:
+    """Fill group.context for each group, best first, within the total cap (the first group is never starved)."""
+    max_section = max_section or config.FULL_CONTEXT_MAX_WORDS_SECTION
+    left = max_total or config.FULL_CONTEXT_MAX_WORDS_TOTAL
+    for g in groups:
+        found = {"id": g.chunk_id, "text": g.text}
+        sibs = fetch_siblings(g.section_id) if g.section_id else []
+        for s in sibs:
+            if s["id"] == g.chunk_id:
+                found = s
+        cap = min(max_section, left)
+        g.context, g.context_words = section_context(found, sibs, max(cap, _nwords(g.text)))
+        left = max(left - g.context_words, 0)
 
 
 # ---------- the index ----------
@@ -189,6 +243,13 @@ class Retriever:
         self.embedder = embedder if embedder is not None else embed.make_embedder()
         self.cache = cache if cache is not None else embed.EmbedCache(config.EMBED_CACHE_PATH)
 
+    def siblings(self, section_id: str) -> list[dict]:
+        res = self.col.get(where={"section_id": section_id}, include=["metadatas", "documents"])
+        return [{"id": i, "text": d, "chunk_no": int(md.get("chunk_no", 0))}
+                for i, d, md in zip(res["ids"], res["documents"], res["metadatas"])]
+
     def retrieve(self, question: str) -> Retrieval:
         vector = embed.embed_query(question, self.embedder, self.cache)
-        return process_hits(question, query_index(self.col, vector))
+        out = process_hits(question, query_index(self.col, vector))
+        expand_context(out.groups, self.siblings)
+        return out

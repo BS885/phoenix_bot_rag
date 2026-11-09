@@ -193,6 +193,7 @@ def chunk_page(doc: dict, url: str, meta: dict | None = None) -> list[dict]:
             "page_title": page_title,
             "section_title": title,
             "section_id": section_id,
+            "chunk_no": n,             # order of the chunk inside its page (parts of a section are consecutive)
             "anchor": anchor or "",  # real #id on the page, "" when the section has none
             "area": area,
             "product": product,

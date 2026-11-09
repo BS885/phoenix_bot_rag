@@ -126,5 +126,55 @@ class TestProductMatchAndClarify(unittest.TestCase):
         self.assertEqual(len(d["groups"]), 2)
 
 
+def part(n, words, section="מקטע", sid="s1", cid=None):
+    body = " ".join(f"p{n}w{i}" for i in range(words))
+    return {"id": cid or f"c{n}", "text": f"עמוד > {section}\n{body}", "chunk_no": n, "section_id": sid}
+
+
+class TestFullContext(unittest.TestCase):
+    def test_all_parts_in_page_order_without_repeating_the_header(self):
+        parts = [part(2, 50), part(0, 50), part(1, 50)]
+        text, words = r.section_context(parts[1], parts, 600)
+        self.assertEqual(text.count("עמוד > מקטע"), 1)
+        self.assertTrue(text.index("p0w0") < text.index("p1w0") < text.index("p2w0"))
+        self.assertEqual(words, 3 + 50 + 2 * 50)   # the header (3 words) counts once, with the found chunk
+
+    def test_cap_keeps_the_found_chunk_and_its_nearest_parts(self):
+        parts = [part(n, 200) for n in range(5)]
+        text, words = r.section_context(parts[2], parts, 600)
+        self.assertIn("p2w0", text)
+        self.assertLessEqual(words, 600 + 5)
+        self.assertNotIn("p0w0", text)
+        self.assertNotIn("p4w0", text)
+
+    def test_found_chunk_is_kept_even_if_it_alone_exceeds_the_cap(self):
+        parts = [part(0, 400), part(1, 400)]
+        text, _ = r.section_context(parts[1], parts, 100)
+        self.assertIn("p1w0", text)
+        self.assertNotIn("p0w0", text)
+
+    def test_total_cap_across_groups(self):
+        groups = [r.Group(text="x > t\n" + " ".join(["w"] * 10), url=H + f"/a/{i}", anchor="",
+                          page_title="x", section_title="t", topic="a", topic_name="a", distance=0.1 + i / 100,
+                          short=False, chunk_id=f"g{i}0", section_id=f"sec{i}") for i in range(3)]
+        sib = lambda sid: [part(n, 200, sid=sid, cid=f"g{sid[-1]}{n}") for n in range(3)]   # noqa: E731
+        r.expand_context(groups, sib, max_section=600, max_total=900)
+        self.assertLessEqual(groups[0].context_words, 600)
+        self.assertLessEqual(sum(g.context_words for g in groups[:2]), 900 + 15)
+        self.assertTrue(all(g.context for g in groups))         # nobody is left without context
+
+    def test_no_section_id_means_just_the_found_chunk(self):
+        g = r.Group(text="x > t\nאחת שתיים", url=H, anchor="", page_title="x", section_title="t", topic="a",
+                    topic_name="a", distance=0.1, short=False)
+        r.expand_context([g], lambda sid: [])
+        self.assertEqual(g.context, "x > t\nאחת שתיים")
+
+    def test_process_hits_carries_ids(self):
+        h = hit("/health-insurance/a/", "נושא", 0.2)
+        h["id"], h["section_id"] = "abc", "sec9"
+        g = r.process_hits("שאלה", [h]).groups[0]
+        self.assertEqual((g.chunk_id, g.section_id), ("abc", "sec9"))
+
+
 if __name__ == "__main__":
     unittest.main()

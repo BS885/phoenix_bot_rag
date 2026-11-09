@@ -237,6 +237,23 @@ class TestQuota(IndexTestCase):
         self.assertEqual((stats["hits"], stats["misses"]), (32, 68))
 
 
+class TestAsciiIndexPath(unittest.TestCase):
+    """Decision 43: Chroma writes no HNSW files under an absolute non-ASCII path, so the index must get an ASCII one."""
+
+    def test_non_ascii_directory_gets_an_ascii_path_that_points_to_the_same_place(self):
+        base = Path(tempfile.mkdtemp())
+        target = base / "תיקייה" / "chroma_db"
+        got = bi.ascii_path(target)
+        self.assertTrue(got.isascii())
+        self.assertTrue(target.exists())
+        (Path(got) / "marker").write_text("x")
+        self.assertTrue((target / "marker").exists())
+
+    def test_ascii_path_is_returned_unchanged(self):
+        d = tempfile.mkdtemp()
+        self.assertEqual(bi.ascii_path(d), d)
+
+
 class TestRetriesAreThrottled(unittest.TestCase):
     def test_effective_limits_are_80_percent(self):
         self.assertEqual((config.EMBED_RPM, config.EMBED_TPM), (80, 24_000))

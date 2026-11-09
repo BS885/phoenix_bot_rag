@@ -205,9 +205,31 @@ def clean_metadata(c: dict) -> dict:
     return out
 
 
+def ascii_path(path) -> str:
+    """Chroma's native HNSW writer silently fails on absolute paths with non-ASCII characters (Windows): the build
+    "succeeds" but the index cannot be loaded (decision 43). Give it an ASCII path: the 8.3 short name, else a path
+    relative to the working directory."""
+    import os
+    from pathlib import Path
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    text = str(path)
+    if text.isascii():
+        return text
+    if os.name == "nt":
+        import ctypes
+        buf = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.GetShortPathNameW(text, buf, 1024) and buf.value.isascii():
+            return buf.value
+    rel = os.path.relpath(text)
+    if rel.isascii():
+        return rel
+    raise RuntimeError(f"no ASCII path for the index directory {text!r}: set config.CHROMA_DIR to an ASCII path")
+
+
 def get_client(path=None):
     import chromadb
-    return chromadb.PersistentClient(path=str(path or config.CHROMA_DIR))
+    return chromadb.PersistentClient(path=ascii_path(path or config.CHROMA_DIR))
 
 
 def build_collection(client, name: str, chunks: list[dict], vectors: list[list[float]], scope: str = "all"):
