@@ -237,6 +237,48 @@ class TestQuota(IndexTestCase):
         self.assertEqual((stats["hits"], stats["misses"]), (32, 68))
 
 
+class TestNetworkBlips(unittest.TestCase):
+    def test_dns_failure_is_retried_with_backoff(self):
+        class ConnectError(Exception):
+            pass
+        calls, sleeps = [], []
+
+        def fn():
+            calls.append(1)
+            if len(calls) < 3:
+                raise ConnectError("[Errno 11001] getaddrinfo failed")
+            return "ok"
+        self.assertEqual(embed.with_retries(fn, sleeps.append), "ok")
+        self.assertEqual(sleeps, [config.EMBED_BACKOFF_SEC, config.EMBED_BACKOFF_SEC * 2])
+
+
+class TestNetworkBlipAccounting(unittest.TestCase):
+    def test_each_attempt_passes_the_limiter_but_the_daily_count_is_once(self):
+        class ConnectError(Exception):
+            pass
+
+        class Inner:                       # like GeminiEmbedder: the gate runs inside every attempt
+            gate = None
+            attempts = 0
+
+            def embed(self, texts):
+                def call():
+                    self.gate()
+                    self.attempts += 1
+                    if self.attempts < 3:
+                        raise ConnectError("[Errno 11001] getaddrinfo failed")
+                    return [[0.0]] * len(texts)
+                return embed.with_retries(call, lambda s: None)
+
+        lim = embed.RateLimiter(rpm=1000, tpm=10**9)
+        usage = embed.DailyUsage(Path(tempfile.mkdtemp()) / "u.json", limit=1000, today="d")
+        inner = Inner()
+        embed.ThrottledEmbedder(inner, lim, usage).embed(["x"] * 16)
+        self.assertEqual(inner.attempts, 3)
+        self.assertEqual(sum(e[1] for e in lim.events), 3 * 16)   # (a) all three attempts went through the limiter
+        self.assertEqual(usage.used, 16)                          # (b) the day counts the 16 texts once
+
+
 class TestAsciiIndexPath(unittest.TestCase):
     """Decision 43: Chroma writes no HNSW files under an absolute non-ASCII path, so the index must get an ASCII one."""
 

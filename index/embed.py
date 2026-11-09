@@ -135,7 +135,10 @@ def is_retryable(exc: Exception) -> bool:
     if code in (429, 500, 502, 503, 504):
         return True
     text = str(exc)
-    return any(k in text for k in ("RESOURCE_EXHAUSTED", "UNAVAILABLE", "429", "503", "timed out"))
+    if any(k in type(exc).__name__ for k in ("ConnectError", "ConnectTimeout", "ReadTimeout", "RemoteProtocolError")):
+        return True   # network blips (DNS, connection reset): backoff and retry
+    return any(k in text for k in ("RESOURCE_EXHAUSTED", "UNAVAILABLE", "429", "503", "timed out", "getaddrinfo",
+                                   "Connection reset", "Connection aborted"))
 
 
 def with_retries(fn, sleep=time.sleep, attempts: int | None = None):
