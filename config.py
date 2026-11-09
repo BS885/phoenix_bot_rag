@@ -304,6 +304,7 @@ ERROR_TEXT = "אירעה תקלה זמנית ולא ניתן היה לענות �
 ERROR_QUOTA_TEXT = "השירות עמוס כרגע או שהגענו למכסת השימוש. אפשר לנסות שוב מאוחר יותר."
 ERROR_QUOTA_DAILY_TEXT = "הגענו למכסת השימוש היומית. אפשר לנסות שוב מחר."
 CLAIM_REQUIRED_NOTE = "הערה: חובה לפחות טענה אחת עם ציטוט מילה במילה."
+STYLE_RETRY_NOTE = "הערה: נסחו מחדש את הטענות בלשון רבים או סתמית, בלי צורות בלשון יחיד."
 CITATION_RETRY_NOTE = "הערה: הציטוט חייב להיות מועתק מילה במילה מהמקור, בלי קיצור."
 CLAIM_STRENGTH_WORDS = ("מומלץ", "כדאי")   # a claim text with one of these needs the same word in its quote
 CLAIM_MIN_OVERLAP = 0.3              # a claim's text must share at least this share of word stems with its quote (verify.overlap)

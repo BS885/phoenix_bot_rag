@@ -52,7 +52,7 @@ def _unique_sources(prompt_sources: list[dict], used: list[int]) -> list[dict]:
 def _verify_debug(res) -> dict:
     """What verification did with every claim, and why a claim was removed."""
     return {"valid": len(res.valid), "dropped": len(res.dropped), "used_sources": res.used_sources,
-            "claims": [{"n": c.n, "source": c.source, "ok": c.ok, "reason": c.reason, "note": c.note,
+            "claims": [{"n": c.n, "source": c.source, "ok": c.ok, "reason": c.reason, "note": c.note, "style": c.style,
                         "text": c.text, "quote": c.quote} for c in res.claims]}
 
 
@@ -177,6 +177,26 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
         debug["verify_retry"] = _verify_debug(res)
         if not res.valid:
             return not_found()
+
+    # a style issue (gendered form) never removes a claim: ONE rephrase request (unless the retry above was already used),
+    # and if it does not help the claim is shown as it is and the issue stays in debug
+    styled = [c for c in res.valid if c.style]
+    if styled and not debug.get("retried_citation"):
+        try:
+            again = call(built.user + "\n\n" + config.STYLE_RETRY_NOTE, built)
+            res2 = verify.verify_claims(again.get("claims") or [], built.sources) if again.get("found") else None
+        except llm.LLMError as exc:
+            res2 = None
+            debug["style_retry_error"] = str(exc)[:200]
+        debug["style_retry"] = "not used"
+        if res2 and len(res2.valid) >= len(res.valid) and len([c for c in res2.valid if c.style]) < len(styled):
+            reply, res = again, res2
+            model_personal = model_personal or bool(again.get("is_personal"))
+            debug["style_retry"] = "used"
+            debug["verify_style_retry"] = _verify_debug(res2)
+    elif styled:
+        debug["style_retry"] = "skipped (retry already used)"
+    debug["style_issues"] = [{"text": c.text, "style": c.style} for c in res.valid if c.style]
 
     text = " ".join(c.final_text for c in res.valid)
     missing = str(reply.get("missing", "") or "").strip()

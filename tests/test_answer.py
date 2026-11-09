@@ -218,12 +218,46 @@ class TestClaimsFailOneByOne(unittest.TestCase):
         self.assertEqual(out.status, "partial")
         self.assertNotIn("fake.example", out.text)
 
-    def test_a_singular_form_in_the_text_removes_the_claim(self):
-        gen = Gen(reply(claim(), claim("עליך למלא את הטופס באתר.", "יש למלא את הטופס באתר")))
+    def test_the_site_style_kaf_forms_pass_without_any_retry(self):
+        gen = Gen(reply(claim("עליך למלא את הטופס באתר.", "יש למלא את הטופס באתר")))
         out, _ = run(Q, gen)
-        self.assertEqual(out.status, "partial")
-        self.assertNotIn("עליך", out.text)
-        self.assertEqual(out.debug["removed_claims"][0]["reason"], "singular_form")
+        self.assertEqual((out.status, len(gen.calls)), ("answered", 1))
+        self.assertIn("עליך", out.text)
+
+    def test_a_gendered_form_gets_one_rephrase_request_and_the_rephrased_claim_is_used(self):
+        gen = Gen(reply(claim("אתה יכול למלא את הטופס באתר.")), reply(claim("אפשר למלא את הטופס באתר.")))
+        out, _ = run(Q, gen)
+        self.assertEqual((out.status, len(gen.calls)), ("answered", 2))
+        self.assertIn(config.STYLE_RETRY_NOTE, gen.calls[1]["prompt"])
+        self.assertEqual(out.text, "אפשר למלא את הטופס באתר.")
+        self.assertEqual(out.debug["style_retry"], "used")
+
+    def test_if_the_rephrase_does_not_help_the_claim_is_shown_as_it_is_and_logged(self):
+        same = reply(claim("אתה יכול למלא את הטופס באתר."))
+        out, _ = run(Q, Gen(same, dict(same)))
+        self.assertEqual(out.status, "answered")
+        self.assertIn("אתה יכול למלא את הטופס באתר.", out.text)
+        self.assertEqual(out.debug["style_retry"], "not used")
+        self.assertEqual(out.debug["style_issues"], [{"text": "אתה יכול למלא את הטופס באתר.", "style": "singular_form: אתה"}])
+        self.assertNotIn("removed_claims", out.debug)
+
+    def test_a_worse_rephrase_is_not_taken(self):
+        gen = Gen(reply(claim("אתה יכול למלא את הטופס באתר.")), reply(claim(quote="ציטוט שלא קיים")))
+        out, _ = run(Q, gen)
+        self.assertEqual(out.status, "answered")
+        self.assertIn("אתה יכול", out.text)
+        self.assertEqual(out.debug["style_retry"], "not used")
+
+    def test_no_second_retry_when_the_citation_retry_was_already_used(self):
+        gen = Gen(reply(claim(quote="לא קיים")), reply(claim("אתה יכול למלא את הטופס באתר.")))
+        out, _ = run(Q, gen)
+        self.assertEqual((out.status, len(gen.calls)), ("answered", 2))
+        self.assertEqual(out.debug["style_retry"], "skipped (retry already used)")
+
+    def test_a_failure_in_the_rephrase_call_keeps_the_original(self):
+        out, _ = run(Q, Gen(reply(claim("אתה יכול למלא את הטופס באתר.")), llm.LLMError("down")))
+        self.assertEqual(out.status, "answered")
+        self.assertIn("style_retry_error", out.debug)
 
     def test_a_claim_unrelated_to_its_quote_is_removed(self):
         gen = Gen(reply(claim(), claim("הפניקס היא חברה גדולה ויציבה בענף הביטוח", "יש למלא את הטופס באתר")))
@@ -320,9 +354,10 @@ class TestDebugKeepsTheRawJson(unittest.TestCase):
             self.assertIn("45", c["note"])
 
     def test_removed_claims_in_a_partial_answer_carry_text_quote_reason(self):
-        out, _ = run(Q, Gen(reply(claim(), claim("עליך למלא את הטופס באתר.", "יש למלא את הטופס באתר"))))
-        self.assertEqual(out.debug["removed_claims"], [{"text": "עליך למלא את הטופס באתר.", "quote": "יש למלא את הטופס באתר",
-                                                        "reason": "singular_form", "note": "עליך"}])
+        out, _ = run(Q, Gen(reply(claim(), claim("הטיפול נמשך 45 ימים.", "יש למלא את הטופס באתר"))))
+        self.assertEqual(out.debug["removed_claims"][0]["text"], "הטיפול נמשך 45 ימים.")
+        self.assertEqual(out.debug["removed_claims"][0]["quote"], "יש למלא את הטופס באתר")
+        self.assertIn(out.debug["removed_claims"][0]["reason"], ("low_overlap", "unsupported_value"))
 
 
 class TestClarify(unittest.TestCase):
@@ -450,7 +485,7 @@ class TestFixedTexts(unittest.TestCase):
     def test_no_digits_or_links_in_the_fixed_texts(self):
         for name in ("NOT_FOUND_TEXT", "OUT_OF_SCOPE_TEXT", "ADVICE_TEXT", "GREETING_TEXT", "CLARIFY_TEXT",
                      "COVERAGE_CAVEAT", "SUSPECTED_PERSONAL_CAVEAT", "PARTIAL_REMOVED_NOTE", "ERROR_TEXT",
-                     "ERROR_QUOTA_TEXT", "ERROR_QUOTA_DAILY_TEXT", "CITATION_RETRY_NOTE"):
+                     "ERROR_QUOTA_TEXT", "ERROR_QUOTA_DAILY_TEXT", "CITATION_RETRY_NOTE", "STYLE_RETRY_NOTE"):
             self.assertNotRegex(getattr(config, name), r"\d|https?://|www\.", name)
 
     def test_the_partial_note_wording(self):

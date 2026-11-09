@@ -9,8 +9,9 @@
       "query": "יש לי ניתוח, מה אני צריך לעשות בשביל זה?",
       "expected_status": ["answered", "partial"],
       "must_mention": [
-        {"label": "approval for a future surgery", "any_of": ["אישור לניתוח עתידי", "ניתוח עתידי"]},
-        {"label": "phone for an urgent surgery", "any_of": ["3455*", "ניתוח דחוף"]}
+        {"label": "the stage BEFORE surgery: approval for a future surgery with its link, or 'contact us before the surgery'",
+         "any_of": ["אישור לניתוח עתידי", "ניתוח עתידי", "surgeryclaim.fnx.co.il", "בטרם ביצוע הניתוח", "לפני ביצוע הניתוח"]},
+        {"label": "the phone for an urgent surgery", "any_of": ["3455*"]}
       ],
       "note": "The question fits several stages (before/after, urgent/future). The answer must cover the future-surgery approval AND the urgent-surgery phone, not only claim submission. Never one stage chosen silently."
     },

@@ -30,6 +30,10 @@ class TestA1(unittest.TestCase):
         a1 = next(c for c in cases if c["id"] == "a1")
         self.assertEqual(a1["query"], "יש לי ניתוח, מה אני צריך לעשות בשביל זה?")
         self.assertEqual(len(a1["must_mention"]), 2)
+        before, urgent = a1["must_mention"]
+        for alt in ("אישור לניתוח עתידי", "surgeryclaim.fnx.co.il", "בטרם ביצוע הניתוח"):
+            self.assertIn(alt, before["any_of"])
+        self.assertEqual(urgent["any_of"], ["3455*"])
         self.assertTrue(all(m["any_of"] for m in a1["must_mention"]))
 
 

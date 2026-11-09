@@ -21,27 +21,39 @@ def one(text, quote, source=1):
 
 
 class TestSingularForms(unittest.TestCase):
-    def test_forms_with_a_final_kaf_and_fixed_forms_are_found(self):
-        for form in ("עליך", "בפניך", "שברשותך", "לך", "אליך", "שלך", "ולך", "ופנייתך"):
-            self.assertEqual(v.singular_forms(f"יש לפנות {form} בהקדם"), [form], form)
-        self.assertIn("אתה", v.singular_forms("אתה יכול להגיש"))
+    """Only truly gendered forms count; the 'ך' forms ('עליך', 'בפניך', 'שברשותך', 'לך') are fine."""
 
-    def test_ordinary_words_ending_in_kaf_are_not_flagged(self):
-        for ok in ("דרך האתר", "תוך שבוע", "בתוך שבוע", "מתוך הטופס", "המשך הטיפול", "במשך שנה", "כך עושים", "אך לא תמיד",
-                   "אורך התקופה", "מערך השירות", "יש צורך באישור", "תהליך הגשת התביעה", "הוגשה עד תאריך מסוים",
-                   "ותאריך היעד", "מסלול ארוך", "הליך מסודר", "ממשיך לפעול"):
+    def test_gendered_forms_are_found(self):
+        for form in ("אתה", "תוכל", "תוכלי", "תרצה", "תרצי", "הינך", "ותוכלי"):
+            self.assertEqual(v.singular_forms(f"{form} להגיש תביעה"), [form], form)
+
+    def test_the_kaf_forms_are_not_flagged_any_more(self):
+        for text in ("עליך לפנות אלינו בטרם ביצוע הניתוח", "בפניך האפשרויות", "הפוליסה שברשותך", "זה לך", "פנו אליך",
+                     "עליך לפנות אלינו בטרם ביצוע הניתוח על מנת לדעת מהן האפשרויות העומדות בפניך בהתאם לפוליסה שברשותך"):
+            self.assertEqual(v.singular_forms(text), [], text)
+
+    def test_the_object_marker_is_not_a_pronoun(self):
+        self.assertEqual(v.singular_forms("יש למלא את הטופס ולשלוח את המסמכים"), [])
+
+    def test_ordinary_words_ending_in_kaf_and_plural_text_are_clean(self):
+        for ok in ("דרך האתר", "תוך שבוע", "המשך הטיפול", "יש צורך באישור", "תהליך הגשת התביעה", "ותאריך היעד",
+                   "ניתן להגיש תביעה, ומומלץ לצרף מסמכים. אפשר לפנות לשירות הלקוחות."):
             self.assertEqual(v.singular_forms(ok), [], ok)
 
-    def test_plural_and_impersonal_text_is_clean(self):
-        self.assertEqual(v.singular_forms("ניתן להגיש תביעה, ומומלץ לצרף מסמכים. אפשר לפנות לשירות הלקוחות."), [])
-
-    def test_the_quote_may_copy_the_singular_but_the_text_may_not(self):
+    def test_the_sentence_from_the_site_passes_as_a_claim(self):
         quote = "עליך לפנות אלינו בטרם ביצוע הניתוח"
+        src = [{"n": 1, "text": f"כדי לדעת מהן האפשרויות העומדות בפניך בהתאם לפוליסה שברשותך, {quote}.", "section": "x", "title": "y"}]
+        got = v.verify_claims([c("עליך לפנות אלינו בטרם ביצוע הניתוח", quote)], src).claims[0]
+        self.assertTrue(got.ok, got)
+        self.assertEqual(got.style, "")
+
+    def test_a_gendered_form_does_not_fail_the_claim_it_only_sets_a_style_flag(self):
+        quote = "יש למלא את הטופס באתר"
         src = [{"n": 1, "text": f"{quote}. עוד מידע כללי על הפוליסה.", "section": "x", "title": "y"}]
-        ok = v.verify_claims([c("יש לפנות לחברה לפני ביצוע הניתוח", quote)], src).claims[0]
-        self.assertTrue(ok.ok)
-        bad = v.verify_claims([c("עליך לפנות לחברה לפני ביצוע הניתוח", quote)], src).claims[0]
-        self.assertEqual((bad.ok, bad.reason), (False, "singular_form"))
+        got = v.verify_claims([c("אתה יכול למלא את הטופס באתר", quote)], src).claims[0]
+        self.assertTrue(got.ok)
+        self.assertEqual(got.style, "singular_form: אתה")
+        self.assertEqual(got.final_text, "אתה יכול למלא את הטופס באתר")
 
 
 class TestOverlap(unittest.TestCase):
@@ -230,7 +242,8 @@ class TestPromptSchema(unittest.TestCase):
         rule = {n: next(l for l in p.SYSTEM.splitlines() if l.startswith(f"{n}. ")) for n in (7, 8)}
         for needle in ('"text"', "בלשון רבים או סתמית", "עליך", "בפניך", "שברשותך", 'רק שדה "quote" מעתיק'):
             self.assertIn(needle, rule[7])
-        for needle in ('"claims"', '"text"', '"source"', '"quote"', "מילה במילה", "כותרת וקישור בלבד", "הכותרת היא הציטוט"):
+        for needle in ('"claims"', '"text"', '"source"', '"quote"', "מילה במילה", "כותרת וקישור בלבד", "הכותרת היא הציטוט",
+                       "מקור תקין", 'ניתן להגיש [הכותרת] בקישור'):
             self.assertIn(needle, rule[8])
 
 

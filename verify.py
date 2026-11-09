@@ -156,11 +156,10 @@ def verify(answer: str, citations: list[dict], sources: list[dict]) -> Verificat
 # ---------- claims: one claim = text + source + quote (stage 5.4b) ----------
 
 _PREFIX_LETTERS = "והבלמשכ"
-# Second-person singular forms (only these; ordinary words that happen to end in a final kaf - "צורך", "תהליך", "תאריך",
-# "דרך" - are NOT singular forms). A form is also recognised after one or two prefix letters ("שברשותך", "ולך").
-_SINGULAR_FORMS = {"עליך", "אליך", "בפניך", "לפניך", "מפניך", "אחריך", "שלך", "לך", "אותך", "אתך", "איתך", "עמך", "עימך",
-                   "ממך", "בך", "אצלך", "ברשותך", "בעבורך", "בשבילך", "מידך", "בידך", "ידך", "תחתיך", "לידך", "אתה", "הנך",
-                   "הינך", "תוכל", "תוכלי", "ביכולתך", "פנייתך", "בקשתך", "תביעתך", "פוליסתך", "חשבונך", "זכותך", "זכאותך"}
+# Truly gendered second-person forms (stylistic check only; a hit asks for ONE rephrase, it never removes a claim).
+# "עליך", "בפניך", "שברשותך", "לך" and the like are NOT here: the site itself uses them and a claim may too. "את" is not here
+# either: as the object marker ("את הטופס") it is one of the most common words. Recognised after one or two prefix letters.
+_SINGULAR_FORMS = {"אתה", "תוכל", "תוכלי", "תרצה", "תרצי", "הינך", "הנך", "תצטרך", "תצטרכי", "ביכולתך"}
 LINK_ONLY_MAX_WORDS = 6        # a source body with at most this many words outside links is a "heading + link" source
 
 
@@ -182,7 +181,7 @@ def overlap(text: str, quote: str) -> float:
 
 
 def singular_forms(text: str) -> list[str]:
-    """Second-person singular forms in a claim text ('עליך', 'בפניך', 'שברשותך', 'אתה' ...). Only a quote may copy them."""
+    """Truly gendered second-person forms in a claim text ('אתה', 'תוכל', 'תרצי', 'הינך' ...)."""
     found = []
     for w in words(text):
         candidates = {w, w[1:] if len(w) > 2 and w[0] in _PREFIX_LETTERS else w,
@@ -242,6 +241,7 @@ class ClaimResult:
     source: int = 0
     reason: str = ""
     note: str = ""
+    style: str = ""             # a style issue that does not remove the claim (gendered form): shown as is unless rephrased
     final_text: str = ""        # text as shown (a link of a heading+link source is appended when the claim has none)
 
 
@@ -306,14 +306,14 @@ def verify_claims(claims: list[dict], sources: list[dict], *, min_overlap: float
         soft = strength_words_added(text, quote)
         if soft:
             res.ok, res.reason, res.note = False, "strength_word", ", ".join(soft)
-        elif sing:
-            res.ok, res.reason, res.note = False, "singular_form", ", ".join(sing)
         elif overlap(text, quote) < min_overlap:
             res.ok, res.reason, res.note = False, "low_overlap", f"{overlap(text, quote):.2f} < {min_overlap}"
         else:
             bad_n, bad_l = _unsupported(text, by_n[chk.source])
             if bad_n or bad_l:
                 res.ok, res.reason, res.note = False, "unsupported_value", ", ".join(bad_n + bad_l)
+        if res.ok and sing:
+            res.style = "singular_form: " + ", ".join(sing)
         if res.ok and chk.source in link_only and not _URL.search(text):          # the link comes from the source
             link = _URL.search(by_n[chk.source]).group(0).rstrip(".,;:!?")
             res.final_text = f"{text} ({link})"
