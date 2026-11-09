@@ -12,6 +12,7 @@
       {"q": "האם אני זכאי להחזר על ניתוח?"},
       {"q": "מה הכיסוי שלי על תרופות?"},
       {"q": "האם התביעה שלי מכוסה?", "tricky": "contains 'התביעה שלי' (personal) but coverage wins"},
+      {"q": "מה מקבלים על דיקור?", "imprecise": true, "note": "owner decision 9.11: 'מה מקבלים' is a coverage phrase"},
       {"q": "כמה כסף חוזר לי על דיקור?", "imprecise": true}
     ],
     "pure_personal": [
@@ -35,6 +36,7 @@
       {"q": "תמליצו לי על ביטוח נסיעות"},
       {"q": "האם להצטרף לפנסיה?"},
       {"q": "מה הכי משתלם לי לקנות?", "imprecise": true},
+      {"q": "איזו קרן הכי טובה?", "note": "stays advice: no procedure verb"},
       {"q": "איך כדאי לי לבחור בין שתי קרנות?", "tricky": "has a how-to word ('איך') but a choice verb ('לבחור') decides: advice"}
     ],
     "greeting": [
@@ -50,13 +52,9 @@
       {"q": "לאן שולחים את טופס התביעה?"},
       {"q": "מה צריך לצרף לתביעה על ניתוח?"},
       {"q": "איפה מוצאים את מספר הטלפון של המוקד", "imprecise": true},
-      {"q": "איך מגישים תביעה?"}
+      {"q": "איך מגישים תביעה?"},
+      {"q": "מה הכי טוב לצרף לתביעה?", "tricky": "'הכי טוב' is advice only without a procedure verb (owner decision 9.11)"}
     ]
   },
-  "pending_owner_decision": [
-    {"q": "מה מקבלים על דיקור?", "owner_expects": "coverage",
-     "note": "Classified 'none' with no flag: 'מקבלים' is a how-to word and no coverage phrase matches. Not fixed, waiting for the owner."},
-    {"q": "מה הכי טוב לצרף לתביעה?", "owner_expects": "procedure",
-     "note": "Classified 'advice': 'הכי טוב' is a choice phrase and decides advice even with 'לצרף'. Conflicts with the owner's own choice-verb rule. Not fixed, waiting for the owner."}
-  ]
+  "pending_owner_decision": []
 }

@@ -51,6 +51,13 @@ def _is_greeting(norm: str) -> bool:
     return not rest.strip()
 
 
+def personal_reply() -> tuple[str, list[dict]]:
+    """The fixed answer to a pure-personal question (kind "personal"): text from config, plus its source page."""
+    text = config.PERSONAL_REPLY.format(**config.PERSONAL_FACTS)
+    src = config.PERSONAL_FACTS_SOURCE
+    return text, [{"title": src["page_title_section"], "url": src["page_url"], "anchor": ""}]
+
+
 def classify(question: str) -> Guard:
     norm = normalize(question)
     out = Guard()
@@ -69,6 +76,8 @@ def classify(question: str) -> Guard:
         return out
 
     adv = _hits(norm, config.GUARD_ADVICE_STRONG) + _hits(norm, config.GUARD_CHOICE_VERBS)
+    if not adv and not _hits(norm, config.GUARD_PROCEDURE_VERBS):
+        adv = _hits(norm, config.GUARD_BEST_PHRASES)
     if not adv and not how_to:
         adv = _hits(norm, config.GUARD_ADVICE_WEAK)
     if adv:
