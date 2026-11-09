@@ -219,6 +219,14 @@ def _unsupported(text: str, source_text: str) -> tuple[list[str], list[str]]:
     return bad_n, bad_l
 
 
+def source_label(source: dict) -> str:
+    """The label line the prompt shows above a source (prompt.build): 'page > section', or just the page title."""
+    title, section = source.get("title", ""), source.get("section", "")
+    if not title and not section:
+        return ""
+    return f"{title} > {section}" if section and section != title else (title or section)
+
+
 def is_link_only(source_text: str) -> bool:
     """A source that is just a heading + link(s): few words once the links are taken out."""
     rest = _URL.sub(" ", source_text)
@@ -261,7 +269,9 @@ def verify_claims(claims: list[dict], sources: list[dict], *, min_overlap: float
     import config
     min_overlap = config.CLAIM_MIN_OVERLAP if min_overlap is None else min_overlap
     by_n = {s["n"]: s["text"] for s in sources}
-    source_words = {n: words(t) for n, t in by_n.items()}
+    # What the model saw for a source is its label line ("page > section") and then the body: a quote may be a contiguous run
+    # of that whole text (it may cross from the label into the body), but never a join of two distant parts.
+    source_words = {s["n"]: words(source_label(s)) + words(s["text"]) for s in sources}
     link_only = {n for n, t in by_n.items() if is_link_only(t)}
     title_words = {s["n"]: [words(s.get("section", "")), words(s.get("title", "")),
                             words(f"{s.get('title', '')} {s.get('section', '')}")] for s in sources}

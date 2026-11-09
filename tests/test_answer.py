@@ -255,14 +255,74 @@ class TestOtherStatuses(unittest.TestCase):
         self.assertEqual((out.status, out.text), ("not_found", config.NOT_FOUND_TEXT))
         self.assertIn("לא מצאתי את זה במידע שאליו יש לי גישה מאתר הפניקס", out.text)
 
-    def test_the_model_flagging_a_personal_question_gives_the_personal_reply(self):
-        out, _ = run("למה לא שילמו לי?", Gen(empty(is_personal=True)))
+    def test_the_model_is_personal_flag_never_makes_the_status_personal(self):
+        # question 3 with a model that says: found=false and is_personal=true
+        q3 = "לייעוץ הרופא, מה אני צריך לצרף?"
+        out, _ = run(q3, Gen(empty(is_personal=True)))
+        self.assertEqual(out.status, "not_found")
+        self.assertTrue(out.text.startswith(config.NOT_FOUND_TEXT))
+        self.assertIn(config.SUSPECTED_PERSONAL_CAVEAT, out.text)
+        self.assertEqual(out.sources, [])
+
+    def test_is_personal_with_found_true_adds_only_the_caveat(self):
+        q3 = "לייעוץ הרופא, מה אני צריך לצרף?"
+        out, _ = run(q3, Gen(reply(is_personal=True)))
+        self.assertEqual(out.status, "answered")
+        self.assertTrue(out.text.endswith(config.SUSPECTED_PERSONAL_CAVEAT))
+
+    def test_without_the_flag_not_found_has_no_caveat(self):
+        out, _ = run(Q, Gen(empty()))
+        self.assertEqual(out.text, config.NOT_FOUND_TEXT)
+
+    def test_the_flag_from_the_retry_counts_too(self):
+        out, _ = run(Q, Gen(reply(claim(quote="לא קיים")), empty(is_personal=True)))
+        self.assertEqual(out.status, "not_found")
+        self.assertIn(config.SUSPECTED_PERSONAL_CAVEAT, out.text)
+
+    def test_only_the_guardrails_keywords_can_make_it_personal(self):
+        out = a.answer("מה מצב התביעה שלי?", None, retriever=NoRetrieval(), generate=Gen())
         self.assertEqual(out.status, "personal")
 
     def test_empty_retrieval_is_not_found_without_a_model_call(self):
         gen = Gen()
         out, _ = run(Q, gen, hits=[])
         self.assertEqual((out.status, len(gen.calls)), ("not_found", 0))
+
+
+class TestDebugKeepsTheRawJson(unittest.TestCase):
+    def test_every_model_call_is_recorded_with_its_raw_reply_retries_included(self):
+        first = reply(claim(quote="ציטוט שלא קיים"))
+        gen = Gen(first, reply())
+        out, _ = run(Q, gen)
+        raw = out.debug["raw_calls"]
+        self.assertEqual(len(raw), 2)
+        self.assertEqual(raw[0]["reply"], first)
+        self.assertEqual(raw[1]["reply"]["claims"][0]["text"], "יש למלא את הטופס באתר.")
+        self.assertEqual(raw[0]["model"], config.LLM_MODEL_ANSWER)
+
+    def test_the_rewrite_call_is_recorded_too(self):
+        hist = [{"role": "user", "text": "איך מגישים תביעה בביטוח בריאות?"}, {"role": "bot", "text": "x", "status": "answered"}]
+        out, _ = run("ומה לצרף?", Gen({"question": "מה לצרף לתביעה בביטוח בריאות?"}, reply()), history=hist)
+        self.assertEqual([c["model"] for c in out.debug["raw_calls"]], [config.LLM_MODEL_FAST, config.LLM_MODEL_ANSWER])
+        self.assertEqual(out.debug["raw_calls"][0]["reply"], {"question": "מה לצרף לתביעה בביטוח בריאות?"})
+
+    def test_a_failed_call_is_recorded_with_its_error(self):
+        out, _ = run(Q, Gen(llm.LLMError("boom")))
+        self.assertIn("boom", out.debug["raw_calls"][0]["error"])
+
+    def test_what_verification_removed_and_why_is_kept_for_both_attempts(self):
+        bad = claim("הטיפול נמשך עד 45 ימי עבודה.", "הטיפול בתביעה נמשך עד 30 ימי עבודה")
+        out, _ = run(Q, Gen(reply(bad), reply(bad)))
+        for key in ("verify", "verify_retry"):
+            c = out.debug[key]["claims"][0]
+            self.assertEqual((c["ok"], c["reason"], c["text"], c["quote"]),
+                             (False, "unsupported_value", bad["text"], bad["quote"]))
+            self.assertIn("45", c["note"])
+
+    def test_removed_claims_in_a_partial_answer_carry_text_quote_reason(self):
+        out, _ = run(Q, Gen(reply(claim(), claim("עליך למלא את הטופס באתר.", "יש למלא את הטופס באתר"))))
+        self.assertEqual(out.debug["removed_claims"], [{"text": "עליך למלא את הטופס באתר.", "quote": "יש למלא את הטופס באתר",
+                                                        "reason": "singular_form", "note": "עליך"}])
 
 
 class TestClarify(unittest.TestCase):

@@ -42,7 +42,7 @@ class GeminiBackend:
 
     def call(self, model: str, prompt: str, system: str | None, schema: dict) -> str:
         types = self._types
-        cfg = types.GenerateContentConfig(system_instruction=system, temperature=config.LLM_TEMPERATURE,
+        cfg = types.GenerateContentConfig(system_instruction=system, temperature=config.LLM_TEMPERATURE, seed=config.LLM_SEED,
                                           response_mime_type="application/json", response_json_schema=schema)
         resp = self._client.models.generate_content(model=model, contents=prompt, config=cfg)
         return resp.text or ""

@@ -128,9 +128,70 @@ class TestHeadingAndLinkSources(unittest.TestCase):
         self.assertTrue(one("אפשר להגיש תביעה בקישור", "להגיש תביעה", 2).ok)
         self.assertEqual(one("אפשר להגיש תביעה בקישור", "בקשה לאישור טלפוני מיידי", 2).reason, "not_in_source")
 
-    def test_an_ordinary_source_cannot_be_quoted_by_its_title(self):
-        got = one("אפשר להגיש תביעה", "איך מגישים תביעה?", 1)         # the section title, but the source has body text
-        self.assertFalse(got.ok)
+
+class TestQuoteAcrossLabelAndBody(unittest.TestCase):
+    """The model sees 'page > section' and then the body. A quote may run from the label into the body, never skip."""
+    SRC = [{"n": 1, "section": "איך מגישים תביעה?", "title": "הגשת תביעה לניתוח",
+            "text": "יש למלא את הטופס באתר. אחר כך שולחים אותו עם כל המסמכים הנדרשים למוקד. הטיפול בתביעה נמשך עד 30 ימי עבודה.",
+            }]
+
+    def one(self, text, quote):
+        return v.verify_claims([c(text, quote)], self.SRC).claims[0]
+
+    def test_label_helper_matches_the_prompt(self):
+        self.assertEqual(v.source_label(self.SRC[0]), "הגשת תביעה לניתוח > איך מגישים תביעה?")
+        self.assertEqual(v.source_label({"title": "אפליקציה", "section": "אפליקציה"}), "אפליקציה")
+        self.assertEqual(v.source_label({"text": "x"}), "")
+
+    def test_a_run_from_the_label_into_the_body_passes_in_any_source(self):
+        got = self.one("יש למלא את הטופס באתר", "איך מגישים תביעה? יש למלא את הטופס באתר")
+        self.assertTrue(got.ok, got)
+        got2 = self.one("לניתוח מגישים תביעה כך", "הגשת תביעה לניתוח איך מגישים תביעה? יש למלא את הטופס")
+        self.assertTrue(got2.ok, got2)
+
+    def test_a_title_only_quote_is_a_run_too(self):
+        self.assertTrue(self.one("איך מגישים תביעה לניתוח", "הגשת תביעה לניתוח").ok)
+
+    def test_two_distant_parts_joined_are_rejected(self):
+        # label + the LAST sentence of the body, skipping everything between them
+        bad = self.one("הטיפול בתביעה לניתוח נמשך זמן", "איך מגישים תביעה? הטיפול בתביעה נמשך עד 30 ימי עבודה")
+        self.assertEqual((bad.ok, bad.reason), (False, "not_in_source"))
+        # body start + body end
+        bad2 = self.one("יש למלא את הטופס ולחכות", "יש למלא את הטופס באתר הטיפול בתביעה נמשך עד 30 ימי עבודה")
+        self.assertEqual((bad2.ok, bad2.reason), (False, "not_in_source"))
+
+    def test_the_live_case_title_plus_link_body(self):
+        src = [{"n": 1, "section": "אישור לניתוח עתידי", "title": "להגיש תביעה",
+                "text": "הגשת תביעה (https://surgeryclaim.fnx.co.il/surgery/home)"}]
+        got = v.verify_claims([c("אפשר להגיש בקשה לאישור לניתוח עתידי באמצעות הגשת תביעה",
+                                 "אישור לניתוח עתידי הגשת תביעה (https://surgeryclaim.fnx.co.il/surgery/home)")], src).claims[0]
+        self.assertTrue(got.ok, got)
+        self.assertEqual(got.final_text.count("surgeryclaim.fnx.co.il"), 1)       # the link is not repeated
+
+
+class TestSeed(unittest.TestCase):
+    def test_a_fixed_seed_is_in_config_and_goes_to_every_call(self):
+        import llm
+        self.assertIsInstance(config.LLM_SEED, int)
+        seen = {}
+
+        class Types:
+            class GenerateContentConfig:
+                def __init__(self, **kw):
+                    seen.update(kw)
+
+        class Client:
+            class models:
+                @staticmethod
+                def generate_content(model, contents, config):
+                    class R:
+                        text = "{}"
+                    return R
+
+        backend = llm.GeminiBackend.__new__(llm.GeminiBackend)
+        backend._types, backend._client = Types, Client
+        backend.call("m", "p", "s", {})
+        self.assertEqual((seen["seed"], seen["temperature"]), (config.LLM_SEED, config.LLM_TEMPERATURE))
 
 
 class TestOneByOne(unittest.TestCase):
