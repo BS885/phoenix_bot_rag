@@ -5,3 +5,7 @@ chroma_db/
 logs/
 __pycache__/
 *.pyc
+
+# skill links created by the streamlit install (point into .venv)
+.agents/
+.claude/skills/
