@@ -155,11 +155,12 @@ def is_retryable(exc: Exception) -> bool:
                                    "Connection reset", "Connection aborted"))
 
 
-def with_retries(fn, sleep=time.sleep, attempts: int | None = None):
+def with_retries(fn, sleep=time.sleep, attempts: int | None = None, backoff: tuple | None = None):
     """Call fn(). 5xx: exponential backoff, up to EMBED_RETRIES attempts. 429: NEVER a retry loop.
 
     A daily 429 stops at once (QuotaStop). A per-minute 429 waits EMBED_QUOTA_WAIT_SEC and retries at most
-    EMBED_QUOTA_RETRIES times, then stops.
+    EMBED_QUOTA_RETRIES times, then stops. `backoff` = fixed waits in seconds before retry 1, 2, 3 ... (the last one repeats);
+    without it the wait doubles from EMBED_BACKOFF_SEC.
     """
     attempts = attempts or config.EMBED_RETRIES
     last, quota_waits, attempt = None, 0, 0
@@ -183,7 +184,7 @@ def with_retries(fn, sleep=time.sleep, attempts: int | None = None):
             last = exc
             attempt += 1
             if attempt < attempts:
-                sleep(config.EMBED_BACKOFF_SEC * (2 ** (attempt - 1)))
+                sleep(backoff[min(attempt - 1, len(backoff) - 1)] if backoff else config.EMBED_BACKOFF_SEC * (2 ** (attempt - 1)))
     raise EmbeddingError(f"gave up after {attempts} attempts: {last}")
 
 

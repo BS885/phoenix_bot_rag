@@ -106,7 +106,10 @@ class LLM:
             return self.backend.call(model, prompt, system, schema)
 
         try:
-            text = embed.with_retries(attempt, self._sleep, attempts=config.LLM_RETRIES + 1)
+            # 5xx / 503 "high demand" / network: waits 2, 6, 15 s (config.LLM_RETRY_BACKOFF_SEC), up to 3 retries; every attempt
+            # (the first included) goes through the limiter inside attempt()
+            text = embed.with_retries(attempt, self._sleep, attempts=len(config.LLM_RETRY_BACKOFF_SEC) + 1,
+                                      backoff=config.LLM_RETRY_BACKOFF_SEC)
         except embed.RateLimitBusy as busy:
             raise LLMBusyError(f"busy: {busy}", wait=busy.wait) from busy
         except embed.QuotaStop as stop:

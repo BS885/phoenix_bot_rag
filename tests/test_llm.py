@@ -47,13 +47,13 @@ class TestGenerate(unittest.TestCase):
             make(b2).generate("p", SCHEMA)
         self.assertEqual(len(b2.calls), 2)     # exactly one retry
 
-    def test_5xx_is_retried_once_then_llm_error(self):
+    def test_5xx_is_retried_with_backoff_then_llm_error(self):
         b = FakeBackend([Err("unavailable", 503), '{"a": "x"}'])
         self.assertEqual(make(b).generate("p", SCHEMA), {"a": "x"})
-        b2 = FakeBackend([Err("unavailable", 503), Err("unavailable", 503)])
+        b2 = FakeBackend([Err("unavailable", 503)] * (len(config.LLM_RETRY_BACKOFF_SEC) + 1))
         with self.assertRaises(llm.LLMError):
             make(b2).generate("p", SCHEMA)
-        self.assertEqual(len(b2.calls), 2)
+        self.assertEqual(len(b2.calls), len(config.LLM_RETRY_BACKOFF_SEC) + 1)
 
     def test_429_never_loops(self):
         b = FakeBackend([Err("RESOURCE_EXHAUSTED GenerateRequestsPerDay quota", 429)])
@@ -159,6 +159,67 @@ class TestWaitCap(unittest.TestCase):
     def test_busy_is_not_a_quota_error_and_is_an_llm_error(self):
         self.assertTrue(issubclass(llm.LLMBusyError, llm.LLMError))
         self.assertFalse(issubclass(llm.LLMBusyError, llm.LLMQuotaError))
+
+
+class Err503(Exception):
+    code = 503
+
+    def __str__(self):
+        return "503 UNAVAILABLE. This model is currently experiencing high demand."
+
+
+class TestHighDemandBackoff(unittest.TestCase):
+    def make(self, failures):
+        slept, now = [], [0.0]
+        replies = [Err503()] * failures + ['{"a": "x"}']
+        backend = FakeBackend(replies)
+        m = llm.LLM(backend, sleep=lambda s: (slept.append(s), now.__setitem__(0, now[0] + s)), clock=lambda: now[0],
+                    usage_dir=tempfile.mkdtemp(), rpm=100, tpm=10 ** 9)
+        return m, backend, slept
+
+    def test_the_config_waits_are_2_6_15(self):
+        self.assertEqual(tuple(config.LLM_RETRY_BACKOFF_SEC), (2, 6, 15))
+
+    def test_one_two_and_three_failures_wait_2_then_6_then_15_and_then_succeed(self):
+        for failures, waits in ((1, [2]), (2, [2, 6]), (3, [2, 6, 15])):
+            m, backend, slept = self.make(failures)
+            self.assertEqual(m.generate("p", SCHEMA), {"a": "x"})
+            self.assertEqual(slept, waits, failures)
+            self.assertEqual(len(backend.calls), failures + 1)
+
+    def test_four_failures_give_up_with_an_llm_error_not_a_quota_error(self):
+        m, backend, slept = self.make(4)
+        with self.assertRaises(llm.LLMError) as cm:
+            m.generate("p", SCHEMA)
+        self.assertNotIsInstance(cm.exception, llm.LLMQuotaError)
+        self.assertEqual((slept, len(backend.calls)), ([2, 6, 15], 4))
+
+    def test_every_attempt_goes_through_the_limiter(self):
+        m, backend, _ = self.make(3)
+        m.generate("p", SCHEMA)
+        limiter = m._limiter(config.LLM_MODEL_ANSWER)
+        self.assertEqual(sum(e[1] for e in limiter.events), 4)          # 4 attempts = 4 requests in the window
+
+    def test_a_429_is_still_never_retried_in_a_loop(self):
+        class Err429(Exception):
+            code = 429
+
+            def __str__(self):
+                return "429 RESOURCE_EXHAUSTED per day"
+        backend = FakeBackend([Err429()])
+        m = llm.LLM(backend, sleep=lambda s: None, usage_dir=tempfile.mkdtemp(), rpm=100, tpm=10 ** 9)
+        with self.assertRaises(llm.LLMQuotaError):
+            m.generate("p", SCHEMA)
+        self.assertEqual(len(backend.calls), 1)
+
+    def test_an_error_that_is_not_retryable_is_raised_at_once(self):
+        class Bad(Exception):
+            code = 400
+        m, backend, slept = self.make(0)
+        backend.replies.insert(0, Bad("bad request"))
+        with self.assertRaises(Bad):
+            m.generate("p", SCHEMA)
+        self.assertEqual(slept, [])
 
 
 if __name__ == "__main__":

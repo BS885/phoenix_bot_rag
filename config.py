@@ -216,6 +216,7 @@ LLM_DEFAULT_LIMITS = {"rpm": 5, "tpm": 100_000, "rpd": 20, "rpd_cap": 16}      #
 LLM_TIMEOUT_MS = 30_000
 LLM_TEMPERATURE = 0.0
 LLM_SEED = 20261109               # fixed seed for every model call (reduces, does not remove, run-to-run variation)
+LLM_RETRY_BACKOFF_SEC = (2, 6, 15)   # waits before retry 1, 2, 3 of a 5xx / 503 "high demand" / network error (not 429)
 LLM_RETRIES = 1                   # one retry on a broken JSON / 5xx, then LLMError (status "error", never not_found)
 LLM_USAGE_PATH = ROOT / "data" / "llm_usage.json"
 
