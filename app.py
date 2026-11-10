@@ -133,6 +133,9 @@ def draw_message(index: int, m: dict, is_last: bool) -> None:
     with st.chat_message("assistant"):
         if vm.kind == "warning":
             st.warning(vm.body)
+        elif vm.items:                                    # 2+ verified claims: one list item per claim
+            for item in vm.items:
+                st.markdown("- " + item)
         else:
             st.markdown(vm.body)
         for note in vm.notes:

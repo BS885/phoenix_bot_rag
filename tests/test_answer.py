@@ -448,6 +448,47 @@ class TestErrors(unittest.TestCase):
             self.assertNotIn("לא מצאתי", t)
 
 
+class TestStructuredReply(unittest.TestCase):
+    def test_claims_and_notes_are_kept_apart_and_the_text_is_unchanged(self):
+        out, _ = run(Q, Gen(reply(claim(), claim("הטיפול נמשך עד 30 ימי עבודה.", "הטיפול בתביעה נמשך עד 30 ימי עבודה"))))
+        self.assertEqual(out.claims, ["יש למלא את הטופס באתר.", "הטיפול נמשך עד 30 ימי עבודה."])
+        self.assertEqual(out.notes, [])
+        self.assertEqual(out.text, " ".join(out.claims))
+
+    def test_the_removed_note_and_the_caveat_are_notes_in_order(self):
+        out, _ = run("מה מקבלים על דיקור בביטוח בריאות?",
+                     Gen(reply(claim(), claim("הטיפול נמשך 45 ימים.", "יש למלא את הטופס באתר"))))
+        self.assertEqual(out.notes, [config.PARTIAL_REMOVED_NOTE, config.COVERAGE_CAVEAT])
+        self.assertEqual(out.text, " ".join(out.claims) + "\n\n" + config.PARTIAL_REMOVED_NOTE + "\n\n" + config.COVERAGE_CAVEAT)
+
+    def test_fixed_text_statuses_have_no_claims(self):
+        out = a.answer("שלום", None, retriever=NoRetrieval(), generate=Gen())
+        self.assertEqual((out.claims, out.notes), ([], []))
+
+
+class TestCaveatsDoNotStack(unittest.TestCase):
+    def test_a_coverage_caveat_replaces_the_suspected_personal_one(self):
+        # "הכיסוי שלי" is both a coverage and a "mine" wording
+        out, _ = run("מה הכיסוי שלי על תרופות בביטוח בריאות?", Gen(reply()))
+        self.assertIn(config.COVERAGE_CAVEAT, out.text)
+        self.assertNotIn(config.SUSPECTED_PERSONAL_CAVEAT, out.text)
+        self.assertEqual(out.notes, [config.COVERAGE_CAVEAT])
+
+    def test_the_model_flags_coverage_and_personal_together_only_the_coverage_caveat(self):
+        out, _ = run("מה כולל ביטוח בריאות להגשת תביעה?", Gen(reply(is_coverage=True, is_personal=True)))
+        self.assertEqual(out.notes, [config.COVERAGE_CAVEAT])
+        self.assertNotIn(config.SUSPECTED_PERSONAL_CAVEAT, out.text)
+
+    def test_suspected_personal_alone_still_gets_its_caveat(self):
+        out, _ = run("איך מבטלים את הפוליסה שלי בביטוח בריאות?", Gen(reply()))
+        self.assertEqual(out.notes, [config.SUSPECTED_PERSONAL_CAVEAT])
+
+    def test_not_found_never_has_the_coverage_caveat(self):
+        out, _ = run("מה הכיסוי שלי על תרופות בביטוח בריאות?", Gen(empty(is_personal=True)))
+        self.assertEqual(out.notes, [config.SUSPECTED_PERSONAL_CAVEAT])
+        self.assertNotIn(config.COVERAGE_CAVEAT, out.text)
+
+
 class TestBusyAndChosenProduct(unittest.TestCase):
     def test_a_busy_limiter_is_an_error_with_the_fixed_busy_text_not_a_quota_text(self):
         out, _ = run(Q, Gen(llm.LLMBusyError("busy: the rate limiter would wait 42s (cap 20s)", wait=42)))

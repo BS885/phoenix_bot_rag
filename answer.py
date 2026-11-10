@@ -33,6 +33,8 @@ class BotReply:
     is_coverage: bool = False
     missing: str = ""
     debug: dict = field(default_factory=dict)
+    claims: list[str] = field(default_factory=list)        # the verified claims as shown, one per item (the list the UI draws)
+    notes: list[str] = field(default_factory=list)         # fixed notes / caveats that follow the claims, in order
 
 
 # ---------- small pure helpers (tested directly) ----------
@@ -74,14 +76,15 @@ def _error(exc: Exception | None, debug: dict) -> BotReply:
     return BotReply("error", text, debug={**debug, "error": str(exc)[:300] if exc else "", "quota": quota})
 
 
-def _caveats(text: str, guard: guardrails.Guard, model_coverage: bool, model_personal: bool = False) -> tuple[str, bool]:
-    """The model's is_personal flag never changes the status: it only adds the suspected-personal caveat."""
+def _caveats(guard: guardrails.Guard, model_coverage: bool, model_personal: bool = False) -> tuple[list[str], bool]:
+    """Fixed caveats. The model's is_personal flag never changes the status: it only asks for the suspected-personal caveat.
+    A coverage caveat already says that nothing here is a personal confirmation, so it replaces the suspected-personal one."""
     coverage = guard.coverage or model_coverage
     if coverage:
-        text += "\n\n" + config.COVERAGE_CAVEAT
+        return [config.COVERAGE_CAVEAT], True
     if guard.suspected_personal or model_personal:
-        text += "\n\n" + config.SUSPECTED_PERSONAL_CAVEAT
-    return text, coverage
+        return [config.SUSPECTED_PERSONAL_CAVEAT], False
+    return [], False
 
 
 # ---------- the flow ----------
@@ -164,8 +167,8 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
     model_personal = bool(reply.get("is_personal"))
 
     def not_found() -> BotReply:
-        text = config.NOT_FOUND_TEXT + ("\n\n" + config.SUSPECTED_PERSONAL_CAVEAT if model_personal else "")
-        return BotReply("not_found", text, debug=debug)
+        notes = [config.SUSPECTED_PERSONAL_CAVEAT] if model_personal else []
+        return BotReply("not_found", config.NOT_FOUND_TEXT + "".join("\n\n" + n for n in notes), debug=debug, notes=notes)
 
     if not reply.get("found"):
         return not_found()
@@ -211,14 +214,17 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
         debug["style_retry"] = "skipped (retry already used)"
     debug["style_issues"] = [{"text": c.text, "style": c.style} for c in res.valid if c.style]
 
-    text = " ".join(c.final_text for c in res.valid)
+    claims = [c.final_text for c in res.valid]
     missing = str(reply.get("missing", "") or "").strip()
     status = "partial" if missing else "answered"
+    notes: list[str] = []
     if res.dropped:                       # a claim that failed verification is removed whole; the rest stays
         debug["removed_claims"] = [{"text": c.text, "quote": c.quote, "reason": c.reason, "note": c.note} for c in res.dropped]
-        text += "\n\n" + config.PARTIAL_REMOVED_NOTE
+        notes.append(config.PARTIAL_REMOVED_NOTE)
         status = "partial"
 
-    text, coverage = _caveats(text, guard, bool(reply.get("is_coverage")), model_personal)
+    caveats, coverage = _caveats(guard, bool(reply.get("is_coverage")), model_personal)
+    notes += caveats
+    text = " ".join(claims) + "".join("\n\n" + n for n in notes)
     return BotReply(status, text, sources=_unique_sources(built.sources, res.used_sources),
-                    is_coverage=coverage, missing=missing, debug=debug)
+                    is_coverage=coverage, missing=missing, debug=debug, claims=claims, notes=notes)

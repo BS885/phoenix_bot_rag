@@ -316,25 +316,27 @@ class TestCopyConversation(AppCase):
         text = self.sidebar_code()
         self.assertIn(f"שאלה: הנייד שלי {PHONE}, איך מגישים תביעה?", text)
         self.assertNotIn("0541234567", text)
-        order = [text.index(x) for x in ("שאלה:", "סטטוס: נענתה חלקית (partial)", "תשובה:", "מקורות:")]
+        order = [text.index(x) for x in ("שאלה:", "סטטוס: חלקית", "תשובה:", "מקורות:")]
         self.assertEqual(order, sorted(order))
         self.assertIn("ניתן להגיש תביעה. טלפון 3455*.", text)          # plain text: not markdown-escaped
-        self.assertIn(f"{SRC['url']}#how | נאסף: 04.11.2026", text)
+        self.assertIn("1. הגשת תביעה \u2014 נאסף: 04.11.2026\n   " + SRC["url"] + "#how", text)
+        self.assertIn("\u2501\u2501 הודעה 1 \u2501\u2501", text)
+        self.assertIn(f"הערה: {config.MISSING_NOTE}", text)               # the note the screen shows is in the copy too
 
     def test_no_developer_details_when_developer_mode_is_off(self):
         self.start(self.DEBUGGY)
         self.ask("שאלה")
         text = self.sidebar_code()
-        for dev_only in ("השאלה אחרי שכתוב", "הקבוצות שנשלפו", "מרחק", "טענות שהוסרו", "low_overlap", "מצב מפתחת"):
+        for dev_only in ("שכתוב:", "קבוצות שנשלפו", "0.212", "טענות שהוסרו", "חפיפה נמוכה", "מצב מפתחת"):
             self.assertNotIn(dev_only, text)
 
     def test_developer_details_are_included_in_developer_mode(self):
         self.start(self.DEBUGGY, env={"PHOENIX_DEV": "1"})
         self.ask("שאלה")
         text = self.sidebar_code()
-        self.assertIn("[מצב מפתחת] השאלה אחרי שכתוב: השאלה אחרי שכתוב", text)
-        self.assertIn("עמוד א > מקטע ב | מרחק 0.212 | " + H + "/a/", text)
-        self.assertIn("low_overlap: טענה שהוסרה", text)
+        self.assertIn("[מצב מפתחת]\nשכתוב: השאלה אחרי שכתוב", text)
+        self.assertIn("1. 0.212 | מקטע ב\n   " + H + "/a/", text)
+        self.assertIn("- חפיפה נמוכה בין הטענה לציטוט: טענה שהוסרה", text)
 
     def test_the_whole_conversation_is_there_in_order_and_a_new_chat_removes_it(self):
         self.start()
@@ -362,6 +364,33 @@ class TestCopyConversation(AppCase):
         self.assertFalse((Path(APP).parent / "conversation.txt").exists())
 
 
+class TestClaimsAsAListOnScreen(AppCase):
+    def test_two_claims_are_two_list_items_and_one_claim_is_a_paragraph(self):
+        r2 = answer.BotReply("answered", "טענה א. טענה ב.", sources=[SRC], claims=["טענה א.", "טענה ב."])
+        r1 = answer.BotReply("answered", "טענה יחידה.", sources=[SRC], claims=["טענה יחידה."])
+        self.start(r2, r1)
+        self.ask("שאלה")
+        md = [m.value for m in self.at.markdown]
+        self.assertIn("- טענה א.", md)
+        self.assertIn("- טענה ב.", md)
+        self.assertNotIn("טענה א. טענה ב.", md)                                  # not one paragraph
+        self.ask("שאלה שנייה")
+        md = [m.value for m in self.at.markdown]
+        self.assertIn("טענה יחידה.", md)
+        self.assertNotIn("- טענה יחידה.", md)
+
+    def test_every_note_and_caveat_is_its_own_caption_line_and_the_missing_note_is_among_them(self):
+        r = answer.BotReply("partial", "x", sources=[SRC], missing="m", claims=["א.", "ב."],
+                            notes=[config.PARTIAL_REMOVED_NOTE, config.COVERAGE_CAVEAT])
+        self.start(r)
+        self.ask("שאלה")
+        captions = [c.value for c in self.at.caption]
+        for note in (config.PARTIAL_REMOVED_NOTE, config.MISSING_NOTE, config.COVERAGE_CAVEAT):
+            self.assertIn(note, captions)
+        order = [captions.index(n) for n in (config.PARTIAL_REMOVED_NOTE, config.MISSING_NOTE, config.COVERAGE_CAVEAT)]
+        self.assertEqual(order, sorted(order))
+
+
 class TestCopyLastAnswer(AppCase):
     def test_a_second_collapsed_area_holds_the_final_answer_alone(self):
         self.start(answer.BotReply("answered", "תשובה ראשונה", sources=[SRC]),
@@ -374,7 +403,7 @@ class TestCopyLastAnswer(AppCase):
         self.assertTrue(last.startswith("זו התשובה הסופית. טלפון 3455*."))
         self.assertNotIn("תשובה ראשונה", last)
         self.assertNotIn("שאלה", last)
-        self.assertIn(f"{SRC['url']}#how | נאסף: 04.11.2026", last)
+        self.assertIn("1. הגשת תביעה \u2014 נאסף: 04.11.2026\n   " + SRC["url"] + "#how", last)
         self.assertIn("תשובה ראשונה", whole)                                   # the whole-conversation block still has everything
         self.assertIn("זו התשובה הסופית", whole)
 

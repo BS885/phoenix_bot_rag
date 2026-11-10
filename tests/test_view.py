@@ -1,3 +1,4 @@
+import re
 import unittest
 
 import config
@@ -15,6 +16,9 @@ def src(path="/claims-customer-service/claims-health-insurance/x/", title="הג�
 
 def reply(status="answered", text="יש למלא את הטופס באתר.", sources=None, missing="", **debug):
     return BotReply(status, text, sources=sources if sources is not None else [src()], missing=missing, debug=debug)
+
+
+SRC_ = src()
 
 
 class TestSources(unittest.TestCase):
@@ -145,38 +149,93 @@ class TestDeveloperMode(unittest.TestCase):
 
 class TestTranscript(unittest.TestCase):
     PHONE, ID, MAIL = (config.PII_PLACEHOLDERS[k] for k in ("phone", "id", "email"))
+    RULE = "\u2501\u2501"
 
-    def bot(self, status="answered", text="יש למלא את הטופס באתר. טלפון 3455*.", sources=None, **debug):
-        r = reply(status, text, sources=sources, **debug)
+    def bot(self, status="answered", text="יש למלא את הטופס באתר. טלפון 3455*.", sources=None, claims=None, notes=None, missing="", **debug):
+        r = BotReply(status, text, sources=[SRC_] if sources is None else sources, missing=missing, debug=debug,
+                     claims=list(claims or []), notes=list(notes or []))
         return {"role": "bot", "text": v.history_text(text), "status": status, "view": v.to_view(r, dev=True), "question": ""}
 
+    def user(self, text):
+        return {"role": "user", "text": text, "status": None, "view": None}
+
     def convo(self, **debug):
-        return [{"role": "user", "text": "איך מגישים תביעה?", "status": None, "view": None},
-                self.bot(**debug),
-                {"role": "user", "text": "ומה לצרף?", "status": None, "view": None},
-                self.bot("not_found", config.NOT_FOUND_TEXT, sources=[])]
+        return [self.user("איך מגישים תביעה?"), self.bot(claims=["יש למלא את הטופס באתר.", "אפשר לפנות בטלפון 3455*."], **debug),
+                self.user("ומה לצרף?"), self.bot("not_found", config.NOT_FOUND_TEXT, sources=[])]
 
-    def test_order_question_status_answer_sources(self):
+    def test_the_layout_title_numbered_messages_question_hebrew_status_list_numbered_sources(self):
         t = v.transcript(self.convo())
-        order = [t.index(x) for x in ("שאלה: איך מגישים תביעה?", "סטטוס: נענתה (answered)", "תשובה:", "יש למלא את הטופס באתר", "מקורות:",
-                                      "שאלה: ומה לצרף?", "סטטוס: לא נמצא (not_found)")]
-        self.assertEqual(order, sorted(order))
-        self.assertIn(f"- הגשת תביעה | {H}/claims-customer-service/claims-health-insurance/x/#how | נאסף: 04.11.2026", t)
-        self.assertEqual(t.count("מקורות:"), 1)                    # not_found has none
+        lines = t.splitlines()
+        self.assertEqual(lines[0], "שיחה עם עוזר המידע לאתר הפניקס")
+        self.assertIn(f"{self.RULE} הודעה 1 {self.RULE}", lines)
+        self.assertIn(f"{self.RULE} הודעה 2 {self.RULE}", lines)
+        i = lines.index("שאלה: איך מגישים תביעה?")
+        self.assertEqual(lines[i + 1:i + 5], ["סטטוס: נענתה", "תשובה:", "\u2022 יש למלא את הטופס באתר.", "\u2022 אפשר לפנות בטלפון 3455*."])
+        self.assertEqual(lines[i + 5:i + 8], ["מקורות:", "1. הגשת תביעה \u2014 נאסף: 04.11.2026",
+                                              f"   {H}/claims-customer-service/claims-health-insurance/x/#how"])
+        j = lines.index("שאלה: ומה לצרף?")
+        self.assertEqual(lines[j + 1], "סטטוס: לא נמצא")
+        self.assertEqual(t.count("מקורות:"), 1)
 
-    def test_plain_text_not_markdown_and_ends_with_a_newline(self):
-        t = v.transcript(self.convo())
-        self.assertIn("טלפון 3455*.", t)
-        self.assertNotIn("\\*", t)
-        self.assertTrue(t.endswith("\n"))
+    def test_one_claim_or_a_fixed_text_is_plain_two_or_more_are_bullets(self):
+        one = v.transcript([self.user("ש"), self.bot(claims=["טענה אחת בלבד."])])
+        self.assertIn("תשובה:\nטענה אחת בלבד.\n", one)
+        self.assertNotIn("\u2022", one)
+        fixed = v.transcript([self.user("ש"), self.bot("advice", config.ADVICE_TEXT, sources=[])])
+        self.assertNotIn("\u2022", fixed)
+        self.assertIn(config.ADVICE_TEXT, fixed)
+
+    def test_hebrew_status_labels(self):
+        expected = {"answered": "נענתה", "partial": "חלקית", "not_found": "לא נמצא", "out_of_scope": "מחוץ להיקף"}
+        for status, label in expected.items():
+            self.assertEqual(v.STATUS_LABELS[status], label)
+            t = v.transcript([self.user("ש"), self.bot(status, "טקסט", sources=[], claims=["טענה."] if status in ("answered", "partial") else [])])
+            self.assertIn(f"סטטוס: {label}\n", t)
+        for status in v.KIND:
+            self.assertIn(status, v.STATUS_LABELS)
+
+    def test_each_note_and_caveat_is_on_its_own_line_labelled(self):
+        msgs = [self.user("ש"), self.bot("partial", "טקסט", claims=["יש להגיש.", "אפשר לשלוח."], missing="משהו חסר",
+                                          notes=[config.PARTIAL_REMOVED_NOTE, config.COVERAGE_CAVEAT])]
+        lines = v.transcript(msgs).splitlines()
+        self.assertIn(f"הערה: {config.PARTIAL_REMOVED_NOTE}", lines)
+        self.assertIn(f"הערה: {config.MISSING_NOTE}", lines)
+        self.assertIn(f"הסתייגות: {config.COVERAGE_CAVEAT}", lines)
+        self.assertLess(lines.index(f"הערה: {config.PARTIAL_REMOVED_NOTE}"), lines.index(f"הערה: {config.MISSING_NOTE}"))
+        self.assertLess(lines.index(f"הערה: {config.MISSING_NOTE}"), lines.index(f"הסתייגות: {config.COVERAGE_CAVEAT}"))
+        self.assertLess(lines.index(f"הסתייגות: {config.COVERAGE_CAVEAT}"), lines.index("מקורות:"))
+
+    def test_a_partial_answer_has_the_note_in_the_copy_as_on_the_screen(self):
+        r = BotReply("partial", "טענה אחת.", sources=[SRC_], missing="הנוסח של המודל", claims=["טענה אחת."])
+        vm = v.to_view(r)
+        self.assertEqual(vm.notes, [config.MISSING_NOTE])                        # what the screen shows ...
+        t = v.transcript([self.user("ש"), {"role": "bot", "text": "x", "status": "partial", "view": vm, "question": ""}])
+        self.assertIn(f"הערה: {config.MISSING_NOTE}", t)                          # ... is in the copy too
+        self.assertNotIn("הנוסח של המודל", t)
+
+    def test_notes_of_a_fixed_text_not_found_with_a_personal_caveat(self):
+        r = BotReply("not_found", config.NOT_FOUND_TEXT + "\n\n" + config.SUSPECTED_PERSONAL_CAVEAT, notes=[config.SUSPECTED_PERSONAL_CAVEAT])
+        t = v.transcript([self.user("ש"), {"role": "bot", "text": "x", "status": "not_found", "view": v.to_view(r), "question": ""}])
+        lines = t.splitlines()
+        self.assertEqual(lines.count(config.NOT_FOUND_TEXT), 1)
+        self.assertIn(f"הסתייגות: {config.SUSPECTED_PERSONAL_CAVEAT}", lines)
+
+    def test_no_english_words_in_the_generated_text_urls_aside(self):
+        groups = [{"url": H + "/a/", "page_title": "עמוד א", "section": "מקטע ב", "distance": 0.2, "topic": "t", "size": 1}]
+        removed = [{"text": "טענה", "quote": "q", "reason": r, "note": ""} for r in v.REASON_LABELS]
+        msgs = self.convo(rewrite={"question": "אחרי שכתוב"}, retrieval={"groups": groups}, removed_claims=removed)
+        for dev in (False, True):
+            t = v.transcript(msgs, dev=dev)
+            without_urls = re.sub(r"https?://\S+", "", t)
+            self.assertNotRegex(without_urls, r"[A-Za-z]", f"dev={dev}: {re.findall(r'[A-Za-z_]+', without_urls)}")
 
     def test_an_empty_conversation_is_an_empty_string(self):
         self.assertEqual(v.transcript([]), "")
         self.assertEqual(v.transcript([], dev=True), "")
 
     def test_no_raw_personal_value_even_if_the_caller_forgot_to_mask(self):
-        msgs = [{"role": "user", "text": "ת״ז 123456789 נייד 0541234567 מייל a.b@c.com איך מגישים?", "status": None, "view": None},
-                {"role": "bot", "text": "x", "status": "notice", "view": v.notice_view("השאלה ארוכה מדי")}]
+        msgs = [self.user("ת״ז 123456789 נייד 0541234567 מייל a.b@c.com איך מגישים?"),
+                {"role": "bot", "text": "x", "status": "notice", "view": v.notice_view("השאלה ארוכה מדי"), "question": ""}]
         t = v.transcript(msgs)
         for raw in ("123456789", "0541234567", "a.b@c.com"):
             self.assertNotIn(raw, t, raw)
@@ -188,75 +247,101 @@ class TestTranscript(unittest.TestCase):
         self.assertNotIn("0541234567", v.transcript(msgs, dev=True))
 
     def test_answers_are_not_masked_the_sites_own_numbers_stay(self):
-        msgs = [{"role": "user", "text": "מה מצב התביעה שלי?", "status": None, "view": None},
-                self.bot("personal", "בטלפון: 3455* או בוואטסאפ 054-9893455", sources=[])]
+        msgs = [self.user("מה מצב התביעה שלי?"), self.bot("personal", "בטלפון: 3455* או בוואטסאפ 054-9893455", sources=[])]
         self.assertIn("054-9893455", v.transcript(msgs))
 
     def test_no_debug_at_all_when_developer_mode_is_off(self):
         groups = [{"url": H + "/a/", "page_title": "עמוד א", "section": "מקטע ב", "distance": 0.2, "topic": "t", "size": 1}]
         msgs = self.convo(rewrite={"question": "אחרי שכתוב"}, retrieval={"groups": groups},
-                          removed_claims=[{"text": "טענה", "quote": "q", "reason": "low_overlap", "note": ""}])
+                          removed_claims=[{"text": "טענה שהוסרה", "quote": "q", "reason": "low_overlap", "note": ""}])
         t = v.transcript(msgs, dev=False)
-        for dev_only in ("אחרי שכתוב", "עמוד א", "מרחק", "low_overlap", "טענה", "מצב מפתחת", "הקבוצות"):
+        for dev_only in ("אחרי שכתוב", "מקטע ב", "0.2", "חפיפה נמוכה", "טענה שהוסרה", "מצב מפתחת", "שכתוב:", "קבוצות שנשלפו"):
             self.assertNotIn(dev_only, t, dev_only)
 
-    def test_developer_part_has_rewrite_groups_and_removed_claims_with_the_reason(self):
+    def test_the_developer_part_rewrite_groups_distance_title_address_next_line_and_removed_claims(self):
         groups = [{"url": H + "/a/", "page_title": "עמוד א", "section": "מקטע ב", "distance": 0.2, "topic": "t", "size": 1},
-                  {"url": H + "/b/", "page_title": "", "section": "מקטע ג", "distance": 0.31, "topic": "t", "size": 2}]
+                  {"url": H + "/b/", "page_title": "עמוד ג", "section": "", "distance": 0.31, "topic": "t", "size": 2}]
         msgs = self.convo(rewrite={"question": "אחרי שכתוב"}, retrieval={"groups": groups},
                           removed_claims=[{"text": "טענה שהוסרה", "quote": "q", "reason": "low_overlap", "note": ""}])
-        t = v.transcript(msgs, dev=True)
-        self.assertIn("[מצב מפתחת] השאלה אחרי שכתוב: אחרי שכתוב", t)
-        self.assertIn(f"  1. עמוד א > מקטע ב | מרחק 0.2 | {H}/a/", t)
-        self.assertIn(f"  2. מקטע ג | מרחק 0.31 | {H}/b/", t)
-        self.assertIn("  - low_overlap: טענה שהוסרה", t)
-        self.assertLess(t.index("מקורות:"), t.index("[מצב מפתחת] השאלה אחרי שכתוב"))      # developer lines come after the sources
+        lines = v.transcript(msgs, dev=True).splitlines()
+        i = lines.index("[מצב מפתחת]")
+        self.assertEqual(lines[i + 1], "שכתוב: אחרי שכתוב")
+        self.assertEqual(lines[i + 2:i + 7], ["קבוצות שנשלפו:", "1. 0.2 | מקטע ב", f"   {H}/a/", "2. 0.31 | עמוד ג", f"   {H}/b/"])
+        self.assertEqual(lines[i + 7:i + 9], ["טענות שהוסרו:", "- חפיפה נמוכה בין הטענה לציטוט: טענה שהוסרה"])
+        self.assertLess(lines.index("מקורות:"), i)                               # developer lines come after the sources
 
-    def test_a_view_without_dev_data_in_developer_mode_adds_nothing(self):
-        msgs = [{"role": "user", "text": "ש", "status": None, "view": None}, self.bot()]
-        msgs[1]["view"] = v.to_view(reply(), dev=False)
+    def test_no_developer_header_when_there_is_nothing_to_show(self):
+        msgs = [self.user("ש"), self.bot("not_found", config.NOT_FOUND_TEXT, sources=[])]
         self.assertNotIn("מצב מפתחת", v.transcript(msgs, dev=True))
 
-    def test_statuses_have_hebrew_labels(self):
-        for status in v.KIND:
-            self.assertIn(status, v.STATUS_LABELS)
+    def test_every_removal_reason_has_a_hebrew_label(self):
+        from verify import verify_claims  # noqa: F401  (the reasons below are the ones verify_claims can produce)
+        for reason in ("not_in_source", "ellipsis", "too_short", "empty_quote", "empty_text", "bad_source_number", "low_overlap",
+                       "unsupported_value", "strength_word"):
+            self.assertIn(reason, v.REASON_LABELS)
 
 
 class TestLastAnswer(unittest.TestCase):
-    def bot(self, status="answered", text="יש למלא את הטופס באתר. טלפון 3455*.", sources=None, **debug):
-        r = reply(status, text, sources=sources, **debug)
+    def bot(self, status="answered", text="x", sources=None, claims=None, notes=None, missing=""):
+        r = BotReply(status, text, sources=[SRC_] if sources is None else sources, missing=missing, claims=list(claims or []),
+                     notes=list(notes or []))
         return {"role": "bot", "text": v.history_text(text), "status": status, "view": v.to_view(r, dev=True), "question": ""}
 
-    def test_it_is_the_last_answer_with_its_sources_only(self):
-        msgs = [{"role": "user", "text": "ש1", "status": None, "view": None}, self.bot(text="תשובה ראשונה"),
-                {"role": "user", "text": "ש2", "status": None, "view": None}, self.bot(text="התשובה הסופית. טלפון 3455*.")]
+    def test_it_is_the_last_answer_with_notes_and_numbered_sources_only(self):
+        msgs = [{"role": "user", "text": "ש1", "status": None, "view": None}, self.bot(claims=["תשובה ראשונה."]),
+                {"role": "user", "text": "ש2", "status": None, "view": None},
+                self.bot(claims=["התשובה הסופית.", "טלפון 3455*."], notes=[config.COVERAGE_CAVEAT])]
         out = v.last_answer(msgs)
-        self.assertTrue(out.startswith("התשובה הסופית. טלפון 3455*."))
-        self.assertNotIn("תשובה ראשונה", out)
-        self.assertNotIn("ש2", out)                                     # no question, no status
-        self.assertNotIn("סטטוס", out)
-        self.assertIn(f"- הגשת תביעה | {H}/claims-customer-service/claims-health-insurance/x/#how | נאסף: 04.11.2026", out)
+        lines = out.splitlines()
+        self.assertEqual(lines[:2], ["\u2022 התשובה הסופית.", "\u2022 טלפון 3455*."])
+        self.assertIn(f"הסתייגות: {config.COVERAGE_CAVEAT}", lines)
+        self.assertEqual(lines[-3:], ["מקורות:", "1. הגשת תביעה \u2014 נאסף: 04.11.2026",
+                                      f"   {H}/claims-customer-service/claims-health-insurance/x/#how"][-3:])
+        for absent in ("תשובה ראשונה", "ש2", "סטטוס", "שאלה:"):
+            self.assertNotIn(absent, out)
         self.assertTrue(out.endswith("\n"))
+
+    def test_the_partial_note_is_in_the_final_answer_copy_too(self):
+        out = v.last_answer([self.bot("partial", "t", claims=["טענה."], missing="משהו")])
+        self.assertIn(f"הערה: {config.MISSING_NOTE}", out)
 
     def test_no_sources_block_when_the_answer_has_none(self):
         out = v.last_answer([self.bot("not_found", config.NOT_FOUND_TEXT, sources=[])])
         self.assertEqual(out, config.NOT_FOUND_TEXT + "\n")
 
-    def test_no_developer_details_ever(self):
-        msgs = [self.bot(rewrite={"question": "אחרי שכתוב"}, retrieval={"groups": [{"url": "u", "section": "s", "distance": 0.2}]},
-                         removed_claims=[{"text": "טענה", "quote": "q", "reason": "low_overlap", "note": ""}])]
-        out = v.last_answer(msgs)
-        for dev_only in ("אחרי שכתוב", "מרחק", "low_overlap", "מצב מפתחת"):
-            self.assertNotIn(dev_only, out)
-
     def test_empty_when_there_is_no_answer_yet_and_a_system_notice_is_not_an_answer(self):
         self.assertEqual(v.last_answer([]), "")
         self.assertEqual(v.last_answer([{"role": "user", "text": "ש", "status": None, "view": None}]), "")
         notice = {"role": "bot", "text": "x", "status": "notice", "view": v.notice_view("השאלה ארוכה מדי"), "question": ""}
-        self.assertEqual(v.last_answer([self.bot(text="תשובה אמיתית"), notice]).splitlines()[0], "תשובה אמיתית")
+        self.assertEqual(v.last_answer([self.bot(claims=["תשובה אמיתית."]), notice]).splitlines()[0], "תשובה אמיתית.")
 
     def test_the_answer_is_not_masked_the_sites_own_numbers_stay(self):
         self.assertIn("054-9893455", v.last_answer([self.bot("personal", "בוואטסאפ 054-9893455", sources=[])]))
+
+
+class TestClaimsAsAList(unittest.TestCase):
+    def test_two_or_more_claims_are_items_one_claim_is_a_paragraph(self):
+        two = v.to_view(BotReply("answered", "א. ב.", claims=["טענה א.", "טענה ב*."], sources=[]))
+        self.assertEqual(two.items, ["טענה א.", "טענה ב\\*."])
+        self.assertEqual(two.body, "")
+        one = v.to_view(BotReply("answered", "א.", claims=["טענה אחת."], sources=[]))
+        self.assertEqual((one.items, one.body), ([], "טענה אחת."))
+
+    def test_without_claims_the_text_is_the_body(self):
+        vm = v.to_view(BotReply("advice", config.ADVICE_TEXT))
+        self.assertEqual((vm.items, vm.body), ([], config.ADVICE_TEXT))
+
+    def test_notes_are_separate_lines_and_the_missing_note_follows_the_removed_note(self):
+        r = BotReply("partial", "x", claims=["א.", "ב."], missing="m", notes=[config.PARTIAL_REMOVED_NOTE, config.COVERAGE_CAVEAT])
+        self.assertEqual(v.to_view(r).notes, [config.PARTIAL_REMOVED_NOTE, config.MISSING_NOTE, config.COVERAGE_CAVEAT])
+        r2 = BotReply("partial", "x", claims=["א."], missing="m", notes=[config.COVERAGE_CAVEAT])
+        self.assertEqual(v.to_view(r2).notes, [config.MISSING_NOTE, config.COVERAGE_CAVEAT])
+
+    def test_not_found_with_a_personal_caveat_shows_the_fixed_text_and_the_caveat_as_a_note(self):
+        r = BotReply("not_found", config.NOT_FOUND_TEXT + "\n\n" + config.SUSPECTED_PERSONAL_CAVEAT,
+                     notes=[config.SUSPECTED_PERSONAL_CAVEAT])
+        vm = v.to_view(r)
+        self.assertEqual((vm.body, vm.notes), (config.NOT_FOUND_TEXT, [config.SUSPECTED_PERSONAL_CAVEAT]))
 
 
 class TestFixedTextsOfTheUi(unittest.TestCase):

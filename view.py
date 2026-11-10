@@ -49,7 +49,10 @@ class ViewModel:
     show_examples: bool = False                     # greeting: offer the example questions
     footer: str = config.FOOTER_NOTE
     dev: dict = field(default_factory=dict)         # filled only in developer mode
-    plain: str = ""                                 # the answer text exactly as produced (NOT markdown-escaped): for the transcript
+    plain: str = ""                                 # the answer text exactly as produced (NOT markdown-escaped)
+    items: list = field(default_factory=list)       # 2+ claims: one markdown-safe line each (the UI draws a list)
+    claims: list = field(default_factory=list)      # the claims as plain text (for the copy areas)
+    plain_notes: list = field(default_factory=list)  # all fixed notes and caveats, plain text, in display order (for the copy areas)
 
 
 def escape_markdown(text: str) -> str:
@@ -107,71 +110,112 @@ def history_text(text: str) -> str:
     return (text or "").split("\n\n", 1)[0].strip()
 
 
-STATUS_LABELS = {"answered": "נענתה", "partial": "נענתה חלקית", "not_found": "לא נמצא", "out_of_scope": "מחוץ להיקף",
+STATUS_LABELS = {"answered": "נענתה", "partial": "חלקית", "not_found": "לא נמצא", "out_of_scope": "מחוץ להיקף",
                  "personal": "שאלה אישית", "advice": "בקשת ייעוץ", "greeting": "ברכה", "clarify": "שאלת הבהרה", "error": "תקלה",
                  "notice": "הודעת מערכת"}
+REASON_LABELS = {"not_in_source": "הציטוט לא נמצא במקור", "ellipsis": "ציטוט עם שלוש נקודות", "too_short": "ציטוט קצר מדי",
+                 "empty_quote": "ציטוט ריק", "empty_text": "טענה ריקה", "bad_source_number": "מספר מקור לא תקין",
+                 "low_overlap": "חפיפה נמוכה בין הטענה לציטוט", "unsupported_value": "מספר, טלפון או קישור שלא מופיע במקור",
+                 "strength_word": "החלשה או הגברה של הניסוח"}
+CAVEAT_NOTES = (config.COVERAGE_CAVEAT, config.SUSPECTED_PERSONAL_CAVEAT)
+BULLET = "\u2022"
+RULE_LINE = "\u2501\u2501"
+
+
+def _answer_lines(vm: "ViewModel") -> list[str]:
+    """The answer block of the copy areas: claims as a list (2+) or plain text, then each note / caveat on its own line, then the
+    numbered sources (title and collection date, the address on the next line)."""
+    lines = []
+    if vm.claims:
+        lines += [f"{BULLET} {c}" for c in vm.claims] if len(vm.claims) >= 2 else [vm.claims[0]]
+    else:
+        lines.append(vm.plain)
+    for n in vm.plain_notes:
+        lines.append(("הסתייגות: " if n in CAVEAT_NOTES else "הערה: ") + n)
+    if vm.sources:
+        lines.append("מקורות:")
+        for i, s in enumerate(vm.sources, 1):
+            lines.append(f"{i}. {s.title or s.url}" + (f" \u2014 נאסף: {s.date}" if s.date else ""))
+            lines.append(f"   {s.url}")
+    return lines
 
 
 def transcript(messages: list[dict], *, dev: bool = False) -> str:
-    """The whole conversation as plain text, in order: question (masked), status, answer, sources. With dev=True ALSO, per answer:
-    the question after the rewrite, the retrieved groups (title, distance, address) and the claims that verification removed, with
-    the reason. Pure: no Streamlit, no disk. The questions are masked again here, so no raw personal value can come out; answers
-    are not masked (they are verified site text: the site's own phone numbers must stay as they are)."""
+    """The whole conversation as plain Hebrew text. Per message: a numbered rule line, the question (masked), the status in Hebrew,
+    the answer as a list, each note / caveat on its own line, the numbered sources. With dev=True ALSO: the rewritten question, the
+    retrieved groups (distance | section title, the address on the next line) and the removed claims with the reason (in Hebrew).
+    Pure: no Streamlit, no disk. Questions are masked again here; answers are not masked (verified site text: the site's own phone
+    numbers must stay)."""
     import privacy
     if not messages:
         return ""
     lines = ["שיחה עם עוזר המידע לאתר הפניקס", "פרטים אישיים בשאלות הוחלפו בסימנים (למשל [טלפון]).", ""]
+    n = 0
     for m in messages:
         vm = m.get("view")
         if m.get("role") == "user":
-            lines += [f"שאלה: {privacy.mask_text(m.get('text', ''))}"]
+            n += 1
+            lines += [f"{RULE_LINE} הודעה {n} {RULE_LINE}", f"שאלה: {privacy.mask_text(m.get('text', ''))}"]
             continue
         if vm is None:
             continue
         if vm.status == "notice":
-            lines += [f"הודעת מערכת: {vm.plain}", ""]
+            n += 1
+            lines += [f"{RULE_LINE} הודעה {n} {RULE_LINE}", f"הודעת מערכת: {vm.plain}", ""]
             continue
-        lines += [f"סטטוס: {STATUS_LABELS.get(vm.status, vm.status)} ({vm.status})", "תשובה:", vm.plain]
-        if vm.sources:
-            lines += ["מקורות:"] + [f"- {s.title or s.url} | {s.url}" + (f" | נאסף: {s.date}" if s.date else "") for s in vm.sources]
+        lines += [f"סטטוס: {STATUS_LABELS.get(vm.status, vm.status)}", "תשובה:"] + _answer_lines(vm)
         if dev and vm.dev:
             d = vm.dev
             rewritten = (d.get("rewrite") or {}).get("question")
-            if rewritten:
-                lines.append(f"[מצב מפתחת] השאלה אחרי שכתוב: {privacy.mask_text(rewritten)}")
             groups = (d.get("retrieval") or {}).get("groups") or []
-            if groups:
-                lines.append("[מצב מפתחת] הקבוצות שנשלפו:")
-                for i, g in enumerate(groups, 1):
-                    title = " > ".join(x for x in (g.get("page_title"), g.get("section")) if x)
-                    lines.append(f"  {i}. {title} | מרחק {g.get('distance')} | {g.get('url')}")
             removed = d.get("removed_claims") or []
+            if rewritten or groups or removed:
+                lines.append("[מצב מפתחת]")
+            if rewritten:
+                lines.append(f"שכתוב: {privacy.mask_text(rewritten)}")
+            if groups:
+                lines.append("קבוצות שנשלפו:")
+                for i, g in enumerate(groups, 1):
+                    lines.append(f"{i}. {g.get('distance')} | {g.get('section') or g.get('page_title') or ''}")
+                    lines.append(f"   {g.get('url')}")
             if removed:
-                lines.append("[מצב מפתחת] טענות שהוסרו:")
-                lines += [f"  - {c.get('reason')}: {c.get('text')}" for c in removed]
+                lines.append("טענות שהוסרו:")
+                lines += [f"- {REASON_LABELS.get(c.get('reason'), 'סיבה לא מוכרת')}: {c.get('text')}" for c in removed]
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
 def last_answer(messages: list[dict]) -> str:
-    """The FINAL bot answer alone, as plain text for copying: the answer text and its sources (no status, no developer details).
-    Empty string when there is no answer yet. Pure: no Streamlit, no disk."""
+    """The FINAL bot answer alone, same layout as one message of the transcript but without the question, the status and any
+    developer details. Empty string when there is no answer yet. Pure: no Streamlit, no disk."""
     for m in reversed(messages or []):
         vm = m.get("view")
         if m.get("role") != "bot" or vm is None or vm.status == "notice":
             continue
-        lines = [vm.plain]
-        if vm.sources:
-            lines += ["", "מקורות:"] + [f"- {s.title or s.url} | {s.url}" + (f" | נאסף: {s.date}" if s.date else "") for s in vm.sources]
-        return "\n".join(lines).rstrip() + "\n"
+        return "\n".join(_answer_lines(vm)).rstrip() + "\n"
     return ""
 
 
 def to_view(reply, *, dev: bool = False) -> ViewModel:
     status = reply.status
-    vm = ViewModel(status=status, kind=KIND.get(status, "neutral"), body=escape_markdown(reply.text), plain=reply.text)
-    if status == "partial" and (reply.missing or "").strip():
-        vm.notes.append(config.MISSING_NOTE)                           # fixed; the model's wording stays in debug
+    claims = list(getattr(reply, "claims", None) or [])
+    vm = ViewModel(status=status, kind=KIND.get(status, "neutral"), body=escape_markdown(reply.text), plain=reply.text, claims=claims)
+    if claims:                                                         # the answer is drawn from the verified claims, not from the joined text
+        vm.body = escape_markdown(claims[0]) if len(claims) == 1 else ""
+        vm.items = [escape_markdown(c) for c in claims] if len(claims) >= 2 else []
+        notes = list(getattr(reply, "notes", None) or [])
+        if status == "partial" and (reply.missing or "").strip():       # fixed; the model's wording stays in debug
+            notes.insert(1 if notes and notes[0] == config.PARTIAL_REMOVED_NOTE else 0, config.MISSING_NOTE)
+        vm.notes = notes
+        vm.plain_notes = list(notes)
+    else:
+        notes = list(getattr(reply, "notes", None) or [])
+        if status == "partial" and (reply.missing or "").strip():
+            notes.insert(0, config.MISSING_NOTE)
+        if notes and reply.text.endswith(tuple(notes)):                 # fixed texts that already carry their notes (not_found + caveat)
+            vm.body = escape_markdown(reply.text.split("\n\n", 1)[0])
+            vm.plain = reply.text.split("\n\n", 1)[0]
+        vm.notes, vm.plain_notes = notes, list(notes)
     if status in STATUSES_WITH_SOURCES:
         vm.sources = source_views(reply.sources)
         if vm.sources:
