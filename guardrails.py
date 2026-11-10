@@ -71,6 +71,9 @@ def classify(question: str) -> Guard:
         return out
 
     pure = _hits(norm, config.GUARD_PERSONAL_PURE) + re.findall(config.GUARD_PERSONAL_ID_PATTERN, norm)
+    pure += [p for k in ("id", "phone") for p in [config.PII_PLACEHOLDERS[k]] if p in question]   # masked ID / phone
+    if config.PII_PLACEHOLDERS["email"] in question:
+        suspect = suspect + [config.PII_PLACEHOLDERS["email"]]
     if pure and not how_to:
         out.kind, out.matched = "personal", pure
         return out

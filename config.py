@@ -246,6 +246,9 @@ GUARD_ADVICE_WEAK =("כדאי לי", "כדאי לנו", "מומלץ")          #
 GUARD_GREETING = ("שלום", "היי", "הי", "בוקר טוב", "ערב טוב", "צהריים טובים", "מה שלומכם", "מה שלומך", "מה נשמע",
                   "תודה", "תודה רבה", "להתראות", "ביי", "שבוע טוב", "יום טוב")
 GUARD_GREETING_MAX_WORDS = 4
+# Placeholders that privacy.mask puts instead of personal details (stage 6). [ת״ז] / [טלפון] in a question are a sign of a
+# personal question (pure personal, like the old 9-digit pattern); [מייל] only raises the suspected-personal flag.
+PII_PLACEHOLDERS = {"id": "[ת״ז]", "phone": "[טלפון]", "email": "[מייל]"}
 
 # Fixed reply for a pure-personal question (kind "personal": no search, no model call). The phone and the addresses are NOT
 # written from memory: each one was read from the chunk named in PERSONAL_FACTS_SOURCE, and a test checks that they are

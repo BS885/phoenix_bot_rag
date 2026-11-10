@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 import config
 import guardrails
 import llm
+import privacy
 import prompt as prompt_mod
 import rewrite as rewrite_mod
 import verify
@@ -84,9 +85,12 @@ def _caveats(text: str, guard: guardrails.Guard, model_coverage: bool, model_per
 
 def answer(question: str, history: list[dict] | None = None, *, retriever=None, generate=None) -> BotReply:
     """history: [{"role": "user" | "bot", "text": str, "status": str (bot turns)}]. `retriever` and `generate` are injectable."""
-    history = history or []
+    # Personal details never leave the process: the question and the history are masked here, whatever the caller did
+    masked = privacy.mask(question)
+    question = masked.text
+    history = privacy.mask_history(history)
     real_generate = generate or llm.generate
-    debug: dict = {"calls": 0, "raw_calls": []}
+    debug: dict = {"calls": 0, "raw_calls": [], "pii_masked": dict(masked.found)}
 
     def generate(prompt, schema, *, system=None, model=None):          # noqa: F811  (records every model call, retries included)
         entry = {"model": model, "prompt_chars": len(prompt)}
