@@ -322,7 +322,16 @@ TOO_LONG_TEXT = "השאלה ארוכה מדי. אפשר לקצר אותה ולנ
 MAX_QUESTION_CHARS = 500
 OPENING_TEXT = ("אפשר לשאול כאן על ביטוח, פנסיה וחיסכון, ואענה אך ורק מתוך המידע הציבורי באתר הפניקס. "
                 "אין להזין פרטים אישיים (תעודת זהות, טלפון, מייל).")
-EXAMPLE_QUESTIONS: tuple = ()            # chosen in 6.3, only after each one was run for real and returned a sourced answer
+# Chosen in 6.3: each one was run for real (logs/example_questions.md) and returned status answered with a source.
+EXAMPLE_QUESTIONS: tuple = ("איך מגישים תביעה בביטוח בריאות?", "מה זה כיסוי אמבולטורי?", "מי יכול ליהנות משירות A LIST?",
+                            "מהי תקופת ההתיישנות להגשת תביעה בביטוח בריאות?")
+APP_TITLE = "עוזר מידע לאתר הפניקס"
+APP_SPINNER = "מחפשים תשובה..."
+INPUT_PLACEHOLDER = "מה תרצו לשאול?"
+NEW_CHAT_LABEL = "שיחה חדשה"
+STARTUP_INDEX_ERROR = "האינדקס חסר או אינו תואם להגדרות. יש לבנות אותו מחדש לפני הפעלת הממשק."
+STARTUP_KEY_ERROR = "מפתח ה-API חסר. יש להגדיר אותו בקובץ הסביבה ולהפעיל מחדש."
+STARTUP_GENERIC_ERROR = "לא ניתן להפעיל את הממשק כרגע. יש לבדוק את האינדקס ואת ההגדרות."
 LLM_MAX_WAIT_SEC = 20                    # the limiter never makes a question wait longer than this: BUSY_TEXT instead
 CHAT_LOG_ENABLED = False                 # off in the demo; PHOENIX_CHAT_LOG=1 (environment only) turns it on for tuning
 CHAT_LOG_PATH = ROOT / "logs" / "chat.jsonl"

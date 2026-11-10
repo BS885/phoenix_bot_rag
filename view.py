@@ -95,6 +95,17 @@ def validate_question(question: str) -> str | None:
     return None
 
 
+def notice_view(text: str) -> ViewModel:
+    """A fixed message that is not a bot answer (validation of the question): no sources, no footer."""
+    return ViewModel(status="notice", kind="neutral", body=escape_markdown(text), footer="")
+
+
+def history_text(text: str) -> str:
+    """What a bot answer contributes to the conversation history sent to the rewrite: the first paragraph only (the fixed caveats
+    and notes that follow it after a blank line are not part of what was said)."""
+    return (text or "").split("\n\n", 1)[0].strip()
+
+
 def to_view(reply, *, dev: bool = False) -> ViewModel:
     status = reply.status
     vm = ViewModel(status=status, kind=KIND.get(status, "neutral"), body=escape_markdown(reply.text))
