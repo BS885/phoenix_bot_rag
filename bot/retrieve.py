@@ -122,7 +122,7 @@ class Retrieval:
                 "dropped_other_product": self.dropped_other_product, "detected_products": self.detected_products,
                 "product_conflict": self.product_conflict, "conflict_topics": self.conflict_topics,
                 "product_miss": self.product_miss,
-                "groups": [{"url": g.url, "section": g.section_title, "topic": g.topic,
+                "groups": [{"url": g.url, "page_title": g.page_title, "section": g.section_title, "topic": g.topic,
                             "distance": round(g.distance, 3), "size": g.size} for g in self.groups]}
 
 

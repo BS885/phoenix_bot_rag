@@ -49,6 +49,7 @@ class ViewModel:
     show_examples: bool = False                     # greeting: offer the example questions
     footer: str = config.FOOTER_NOTE
     dev: dict = field(default_factory=dict)         # filled only in developer mode
+    plain: str = ""                                 # the answer text exactly as produced (NOT markdown-escaped): for the transcript
 
 
 def escape_markdown(text: str) -> str:
@@ -97,7 +98,7 @@ def validate_question(question: str) -> str | None:
 
 def notice_view(text: str) -> ViewModel:
     """A fixed message that is not a bot answer (validation of the question): no sources, no footer."""
-    return ViewModel(status="notice", kind="neutral", body=escape_markdown(text), footer="")
+    return ViewModel(status="notice", kind="neutral", body=escape_markdown(text), footer="", plain=text)
 
 
 def history_text(text: str) -> str:
@@ -106,9 +107,55 @@ def history_text(text: str) -> str:
     return (text or "").split("\n\n", 1)[0].strip()
 
 
+STATUS_LABELS = {"answered": "נענתה", "partial": "נענתה חלקית", "not_found": "לא נמצא", "out_of_scope": "מחוץ להיקף",
+                 "personal": "שאלה אישית", "advice": "בקשת ייעוץ", "greeting": "ברכה", "clarify": "שאלת הבהרה", "error": "תקלה",
+                 "notice": "הודעת מערכת"}
+
+
+def transcript(messages: list[dict], *, dev: bool = False) -> str:
+    """The whole conversation as plain text, in order: question (masked), status, answer, sources. With dev=True ALSO, per answer:
+    the question after the rewrite, the retrieved groups (title, distance, address) and the claims that verification removed, with
+    the reason. Pure: no Streamlit, no disk. The questions are masked again here, so no raw personal value can come out; answers
+    are not masked (they are verified site text: the site's own phone numbers must stay as they are)."""
+    import privacy
+    if not messages:
+        return ""
+    lines = ["שיחה עם עוזר המידע לאתר הפניקס", "פרטים אישיים בשאלות הוחלפו בסימנים (למשל [טלפון]).", ""]
+    for m in messages:
+        vm = m.get("view")
+        if m.get("role") == "user":
+            lines += [f"שאלה: {privacy.mask_text(m.get('text', ''))}"]
+            continue
+        if vm is None:
+            continue
+        if vm.status == "notice":
+            lines += [f"הודעת מערכת: {vm.plain}", ""]
+            continue
+        lines += [f"סטטוס: {STATUS_LABELS.get(vm.status, vm.status)} ({vm.status})", "תשובה:", vm.plain]
+        if vm.sources:
+            lines += ["מקורות:"] + [f"- {s.title or s.url} | {s.url}" + (f" | נאסף: {s.date}" if s.date else "") for s in vm.sources]
+        if dev and vm.dev:
+            d = vm.dev
+            rewritten = (d.get("rewrite") or {}).get("question")
+            if rewritten:
+                lines.append(f"[מצב מפתחת] השאלה אחרי שכתוב: {privacy.mask_text(rewritten)}")
+            groups = (d.get("retrieval") or {}).get("groups") or []
+            if groups:
+                lines.append("[מצב מפתחת] הקבוצות שנשלפו:")
+                for i, g in enumerate(groups, 1):
+                    title = " > ".join(x for x in (g.get("page_title"), g.get("section")) if x)
+                    lines.append(f"  {i}. {title} | מרחק {g.get('distance')} | {g.get('url')}")
+            removed = d.get("removed_claims") or []
+            if removed:
+                lines.append("[מצב מפתחת] טענות שהוסרו:")
+                lines += [f"  - {c.get('reason')}: {c.get('text')}" for c in removed]
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def to_view(reply, *, dev: bool = False) -> ViewModel:
     status = reply.status
-    vm = ViewModel(status=status, kind=KIND.get(status, "neutral"), body=escape_markdown(reply.text))
+    vm = ViewModel(status=status, kind=KIND.get(status, "neutral"), body=escape_markdown(reply.text), plain=reply.text)
     if status == "partial" and (reply.missing or "").strip():
         vm.notes.append(config.MISSING_NOTE)                           # fixed; the model's wording stays in debug
     if status in STATUSES_WITH_SOURCES:

@@ -38,6 +38,7 @@ _CSS = """
 [data-testid="stChatInput"] textarea { direction: rtl; text-align: right; }
 .stButton > button { direction: rtl; }
 pre, code, [data-testid="stJson"] { direction: ltr; text-align: left; }
+[data-testid="stSidebar"] pre { direction: rtl; text-align: right; unicode-bidi: plaintext; white-space: pre-wrap; }
 @media (max-width: 640px) { .block-container { padding-left: 0.8rem; padding-right: 0.8rem; } }
 </style>
 """
@@ -176,6 +177,13 @@ def draw_sidebar() -> None:
             st.rerun()
         if DEV:
             st.caption("מצב מפתחת פעיל")
+        messages = st.session_state["messages"]
+        if messages:
+            text = view.transcript(messages, dev=DEV)          # built in memory only: nothing is written to disk
+            with st.expander(config.COPY_CHAT_LABEL):
+                st.code(text, language=None)                  # st.code has a built-in copy button
+                st.download_button(config.DOWNLOAD_CHAT_LABEL, data=text, file_name="conversation.txt", mime="text/plain",
+                                   key="download-chat")
 
 
 # ---------- main ----------

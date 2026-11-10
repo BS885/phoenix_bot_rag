@@ -293,16 +293,85 @@ class TestNoHtmlInjection(AppCase):
         self.assertEqual(len(self.at.exception), 0)
 
 
+class TestCopyConversation(AppCase):
+    DEBUGGY = answer.BotReply(
+        "partial", "ניתן להגיש תביעה. טלפון 3455*.", sources=[SRC], missing="x",
+        debug={"rewrite": {"question": "השאלה אחרי שכתוב"}, "calls": 2,
+               "retrieval": {"groups": [{"url": H + "/a/", "page_title": "עמוד א", "section": "מקטע ב", "distance": 0.212, "topic": "t", "size": 1}]},
+               "removed_claims": [{"text": "טענה שהוסרה", "quote": "q", "reason": "low_overlap", "note": ""}]})
+
+    def sidebar_code(self):
+        codes = self.at.sidebar.code
+        return codes[0].value if len(codes) else None
+
+    def test_no_copy_area_before_the_first_message(self):
+        self.start()
+        self.assertEqual(len(self.at.sidebar.expander), 0)
+        self.assertIsNone(self.sidebar_code())
+
+    def test_the_conversation_is_in_a_collapsed_sidebar_code_block_with_masked_questions(self):
+        self.start(self.DEBUGGY)
+        self.ask("הנייד שלי 0541234567, איך מגישים תביעה?")
+        self.assertEqual([e.label for e in self.at.sidebar.expander], [config.COPY_CHAT_LABEL])
+        text = self.sidebar_code()
+        self.assertIn(f"שאלה: הנייד שלי {PHONE}, איך מגישים תביעה?", text)
+        self.assertNotIn("0541234567", text)
+        order = [text.index(x) for x in ("שאלה:", "סטטוס: נענתה חלקית (partial)", "תשובה:", "מקורות:")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("ניתן להגיש תביעה. טלפון 3455*.", text)          # plain text: not markdown-escaped
+        self.assertIn(f"{SRC['url']}#how | נאסף: 04.11.2026", text)
+
+    def test_no_developer_details_when_developer_mode_is_off(self):
+        self.start(self.DEBUGGY)
+        self.ask("שאלה")
+        text = self.sidebar_code()
+        for dev_only in ("השאלה אחרי שכתוב", "הקבוצות שנשלפו", "מרחק", "טענות שהוסרו", "low_overlap", "מצב מפתחת"):
+            self.assertNotIn(dev_only, text)
+
+    def test_developer_details_are_included_in_developer_mode(self):
+        self.start(self.DEBUGGY, env={"PHOENIX_DEV": "1"})
+        self.ask("שאלה")
+        text = self.sidebar_code()
+        self.assertIn("[מצב מפתחת] השאלה אחרי שכתוב: השאלה אחרי שכתוב", text)
+        self.assertIn("עמוד א > מקטע ב | מרחק 0.212 | " + H + "/a/", text)
+        self.assertIn("low_overlap: טענה שהוסרה", text)
+
+    def test_the_whole_conversation_is_there_in_order_and_a_new_chat_removes_it(self):
+        self.start()
+        self.ask("שאלה ראשונה")
+        self.ask("שאלה שנייה")
+        text = self.sidebar_code()
+        self.assertLess(text.index("שאלה: שאלה ראשונה"), text.index("שאלה: שאלה שנייה"))
+        self.assertEqual(text.count("סטטוס:"), 2)
+        self.at.sidebar.button[0].click().run()
+        self.assertIsNone(self.sidebar_code())
+
+    def test_a_download_button_gives_the_same_text_as_a_txt_file(self):
+        self.start()
+        self.ask("שאלה")
+        buttons = self.at.sidebar.get("download_button")
+        self.assertEqual(len(buttons), 1)
+        self.assertEqual(buttons[0].proto.label, config.DOWNLOAD_CHAT_LABEL)
+
+    def test_nothing_is_written_to_disk_by_the_copy_area(self):
+        import tempfile
+        before = set(Path(tempfile.gettempdir()).glob("conversation*.txt"))
+        self.start()
+        self.ask("שאלה")
+        self.assertEqual(set(Path(tempfile.gettempdir()).glob("conversation*.txt")), before)
+        self.assertFalse((Path(APP).parent / "conversation.txt").exists())
+
+
 class TestDeveloperMode(AppCase):
     def test_off_by_default(self):
         self.start()
         self.ask("שאלה")
-        self.assertEqual(len(self.at.expander), 0)
+        self.assertEqual(len(self.at.main.expander), 0)               # the developer expander lives in the main area
 
     def test_on_with_the_environment_variable_only(self):
         self.start(env={"PHOENIX_DEV": "1"})
         self.ask("שאלה")
-        self.assertEqual(len(self.at.expander), 1)
+        self.assertEqual(len(self.at.main.expander), 1)
 
 
 class TestChatLogFromTheApp(AppCase):

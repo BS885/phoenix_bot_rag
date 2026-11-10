@@ -143,6 +143,85 @@ class TestDeveloperMode(unittest.TestCase):
         self.assertEqual(dev["calls"], 1)
 
 
+class TestTranscript(unittest.TestCase):
+    PHONE, ID, MAIL = (config.PII_PLACEHOLDERS[k] for k in ("phone", "id", "email"))
+
+    def bot(self, status="answered", text="יש למלא את הטופס באתר. טלפון 3455*.", sources=None, **debug):
+        r = reply(status, text, sources=sources, **debug)
+        return {"role": "bot", "text": v.history_text(text), "status": status, "view": v.to_view(r, dev=True), "question": ""}
+
+    def convo(self, **debug):
+        return [{"role": "user", "text": "איך מגישים תביעה?", "status": None, "view": None},
+                self.bot(**debug),
+                {"role": "user", "text": "ומה לצרף?", "status": None, "view": None},
+                self.bot("not_found", config.NOT_FOUND_TEXT, sources=[])]
+
+    def test_order_question_status_answer_sources(self):
+        t = v.transcript(self.convo())
+        order = [t.index(x) for x in ("שאלה: איך מגישים תביעה?", "סטטוס: נענתה (answered)", "תשובה:", "יש למלא את הטופס באתר", "מקורות:",
+                                      "שאלה: ומה לצרף?", "סטטוס: לא נמצא (not_found)")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn(f"- הגשת תביעה | {H}/claims-customer-service/claims-health-insurance/x/#how | נאסף: 04.11.2026", t)
+        self.assertEqual(t.count("מקורות:"), 1)                    # not_found has none
+
+    def test_plain_text_not_markdown_and_ends_with_a_newline(self):
+        t = v.transcript(self.convo())
+        self.assertIn("טלפון 3455*.", t)
+        self.assertNotIn("\\*", t)
+        self.assertTrue(t.endswith("\n"))
+
+    def test_an_empty_conversation_is_an_empty_string(self):
+        self.assertEqual(v.transcript([]), "")
+        self.assertEqual(v.transcript([], dev=True), "")
+
+    def test_no_raw_personal_value_even_if_the_caller_forgot_to_mask(self):
+        msgs = [{"role": "user", "text": "ת״ז 123456789 נייד 0541234567 מייל a.b@c.com איך מגישים?", "status": None, "view": None},
+                {"role": "bot", "text": "x", "status": "notice", "view": v.notice_view("השאלה ארוכה מדי")}]
+        t = v.transcript(msgs)
+        for raw in ("123456789", "0541234567", "a.b@c.com"):
+            self.assertNotIn(raw, t, raw)
+        for ph in (self.ID, self.PHONE, self.MAIL):
+            self.assertIn(ph, t)
+
+    def test_the_rewritten_question_in_the_developer_part_is_masked_too(self):
+        msgs = self.convo(rewrite={"question": "שאלה עם 0541234567"}, retrieval={"groups": []})
+        self.assertNotIn("0541234567", v.transcript(msgs, dev=True))
+
+    def test_answers_are_not_masked_the_sites_own_numbers_stay(self):
+        msgs = [{"role": "user", "text": "מה מצב התביעה שלי?", "status": None, "view": None},
+                self.bot("personal", "בטלפון: 3455* או בוואטסאפ 054-9893455", sources=[])]
+        self.assertIn("054-9893455", v.transcript(msgs))
+
+    def test_no_debug_at_all_when_developer_mode_is_off(self):
+        groups = [{"url": H + "/a/", "page_title": "עמוד א", "section": "מקטע ב", "distance": 0.2, "topic": "t", "size": 1}]
+        msgs = self.convo(rewrite={"question": "אחרי שכתוב"}, retrieval={"groups": groups},
+                          removed_claims=[{"text": "טענה", "quote": "q", "reason": "low_overlap", "note": ""}])
+        t = v.transcript(msgs, dev=False)
+        for dev_only in ("אחרי שכתוב", "עמוד א", "מרחק", "low_overlap", "טענה", "מצב מפתחת", "הקבוצות"):
+            self.assertNotIn(dev_only, t, dev_only)
+
+    def test_developer_part_has_rewrite_groups_and_removed_claims_with_the_reason(self):
+        groups = [{"url": H + "/a/", "page_title": "עמוד א", "section": "מקטע ב", "distance": 0.2, "topic": "t", "size": 1},
+                  {"url": H + "/b/", "page_title": "", "section": "מקטע ג", "distance": 0.31, "topic": "t", "size": 2}]
+        msgs = self.convo(rewrite={"question": "אחרי שכתוב"}, retrieval={"groups": groups},
+                          removed_claims=[{"text": "טענה שהוסרה", "quote": "q", "reason": "low_overlap", "note": ""}])
+        t = v.transcript(msgs, dev=True)
+        self.assertIn("[מצב מפתחת] השאלה אחרי שכתוב: אחרי שכתוב", t)
+        self.assertIn(f"  1. עמוד א > מקטע ב | מרחק 0.2 | {H}/a/", t)
+        self.assertIn(f"  2. מקטע ג | מרחק 0.31 | {H}/b/", t)
+        self.assertIn("  - low_overlap: טענה שהוסרה", t)
+        self.assertLess(t.index("מקורות:"), t.index("[מצב מפתחת] השאלה אחרי שכתוב"))      # developer lines come after the sources
+
+    def test_a_view_without_dev_data_in_developer_mode_adds_nothing(self):
+        msgs = [{"role": "user", "text": "ש", "status": None, "view": None}, self.bot()]
+        msgs[1]["view"] = v.to_view(reply(), dev=False)
+        self.assertNotIn("מצב מפתחת", v.transcript(msgs, dev=True))
+
+    def test_statuses_have_hebrew_labels(self):
+        for status in v.KIND:
+            self.assertIn(status, v.STATUS_LABELS)
+
+
 class TestFixedTextsOfTheUi(unittest.TestCase):
     def test_no_digits_or_links_in_the_ui_texts(self):
         for name in ("MISSING_NOTE", "FOOTER_NOTE", "SOURCES_NOTE", "BUSY_TEXT", "EMPTY_QUESTION_TEXT", "TOO_LONG_TEXT", "OPENING_TEXT"):
