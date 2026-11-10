@@ -153,6 +153,20 @@ def transcript(messages: list[dict], *, dev: bool = False) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def last_answer(messages: list[dict]) -> str:
+    """The FINAL bot answer alone, as plain text for copying: the answer text and its sources (no status, no developer details).
+    Empty string when there is no answer yet. Pure: no Streamlit, no disk."""
+    for m in reversed(messages or []):
+        vm = m.get("view")
+        if m.get("role") != "bot" or vm is None or vm.status == "notice":
+            continue
+        lines = [vm.plain]
+        if vm.sources:
+            lines += ["", "מקורות:"] + [f"- {s.title or s.url} | {s.url}" + (f" | נאסף: {s.date}" if s.date else "") for s in vm.sources]
+        return "\n".join(lines).rstrip() + "\n"
+    return ""
+
+
 def to_view(reply, *, dev: bool = False) -> ViewModel:
     status = reply.status
     vm = ViewModel(status=status, kind=KIND.get(status, "neutral"), body=escape_markdown(reply.text), plain=reply.text)

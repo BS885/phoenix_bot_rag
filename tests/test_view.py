@@ -222,6 +222,43 @@ class TestTranscript(unittest.TestCase):
             self.assertIn(status, v.STATUS_LABELS)
 
 
+class TestLastAnswer(unittest.TestCase):
+    def bot(self, status="answered", text="יש למלא את הטופס באתר. טלפון 3455*.", sources=None, **debug):
+        r = reply(status, text, sources=sources, **debug)
+        return {"role": "bot", "text": v.history_text(text), "status": status, "view": v.to_view(r, dev=True), "question": ""}
+
+    def test_it_is_the_last_answer_with_its_sources_only(self):
+        msgs = [{"role": "user", "text": "ש1", "status": None, "view": None}, self.bot(text="תשובה ראשונה"),
+                {"role": "user", "text": "ש2", "status": None, "view": None}, self.bot(text="התשובה הסופית. טלפון 3455*.")]
+        out = v.last_answer(msgs)
+        self.assertTrue(out.startswith("התשובה הסופית. טלפון 3455*."))
+        self.assertNotIn("תשובה ראשונה", out)
+        self.assertNotIn("ש2", out)                                     # no question, no status
+        self.assertNotIn("סטטוס", out)
+        self.assertIn(f"- הגשת תביעה | {H}/claims-customer-service/claims-health-insurance/x/#how | נאסף: 04.11.2026", out)
+        self.assertTrue(out.endswith("\n"))
+
+    def test_no_sources_block_when_the_answer_has_none(self):
+        out = v.last_answer([self.bot("not_found", config.NOT_FOUND_TEXT, sources=[])])
+        self.assertEqual(out, config.NOT_FOUND_TEXT + "\n")
+
+    def test_no_developer_details_ever(self):
+        msgs = [self.bot(rewrite={"question": "אחרי שכתוב"}, retrieval={"groups": [{"url": "u", "section": "s", "distance": 0.2}]},
+                         removed_claims=[{"text": "טענה", "quote": "q", "reason": "low_overlap", "note": ""}])]
+        out = v.last_answer(msgs)
+        for dev_only in ("אחרי שכתוב", "מרחק", "low_overlap", "מצב מפתחת"):
+            self.assertNotIn(dev_only, out)
+
+    def test_empty_when_there_is_no_answer_yet_and_a_system_notice_is_not_an_answer(self):
+        self.assertEqual(v.last_answer([]), "")
+        self.assertEqual(v.last_answer([{"role": "user", "text": "ש", "status": None, "view": None}]), "")
+        notice = {"role": "bot", "text": "x", "status": "notice", "view": v.notice_view("השאלה ארוכה מדי"), "question": ""}
+        self.assertEqual(v.last_answer([self.bot(text="תשובה אמיתית"), notice]).splitlines()[0], "תשובה אמיתית")
+
+    def test_the_answer_is_not_masked_the_sites_own_numbers_stay(self):
+        self.assertIn("054-9893455", v.last_answer([self.bot("personal", "בוואטסאפ 054-9893455", sources=[])]))
+
+
 class TestFixedTextsOfTheUi(unittest.TestCase):
     def test_no_digits_or_links_in_the_ui_texts(self):
         for name in ("MISSING_NOTE", "FOOTER_NOTE", "SOURCES_NOTE", "BUSY_TEXT", "EMPTY_QUESTION_TEXT", "TOO_LONG_TEXT", "OPENING_TEXT"):

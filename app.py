@@ -180,6 +180,10 @@ def draw_sidebar() -> None:
         messages = st.session_state["messages"]
         if messages:
             text = view.transcript(messages, dev=DEV)          # built in memory only: nothing is written to disk
+            last = view.last_answer(messages)
+            if last:
+                with st.expander(config.COPY_LAST_LABEL):
+                    st.code(last, language=None)              # the final answer alone (and its sources)
             with st.expander(config.COPY_CHAT_LABEL):
                 st.code(text, language=None)                  # st.code has a built-in copy button
                 st.download_button(config.DOWNLOAD_CHAT_LABEL, data=text, file_name="conversation.txt", mime="text/plain",

@@ -302,7 +302,7 @@ class TestCopyConversation(AppCase):
 
     def sidebar_code(self):
         codes = self.at.sidebar.code
-        return codes[0].value if len(codes) else None
+        return codes[-1].value if len(codes) else None          # the last block is the whole conversation
 
     def test_no_copy_area_before_the_first_message(self):
         self.start()
@@ -312,7 +312,7 @@ class TestCopyConversation(AppCase):
     def test_the_conversation_is_in_a_collapsed_sidebar_code_block_with_masked_questions(self):
         self.start(self.DEBUGGY)
         self.ask("הנייד שלי 0541234567, איך מגישים תביעה?")
-        self.assertEqual([e.label for e in self.at.sidebar.expander], [config.COPY_CHAT_LABEL])
+        self.assertEqual([e.label for e in self.at.sidebar.expander], [config.COPY_LAST_LABEL, config.COPY_CHAT_LABEL])
         text = self.sidebar_code()
         self.assertIn(f"שאלה: הנייד שלי {PHONE}, איך מגישים תביעה?", text)
         self.assertNotIn("0541234567", text)
@@ -360,6 +360,37 @@ class TestCopyConversation(AppCase):
         self.ask("שאלה")
         self.assertEqual(set(Path(tempfile.gettempdir()).glob("conversation*.txt")), before)
         self.assertFalse((Path(APP).parent / "conversation.txt").exists())
+
+
+class TestCopyLastAnswer(AppCase):
+    def test_a_second_collapsed_area_holds_the_final_answer_alone(self):
+        self.start(answer.BotReply("answered", "תשובה ראשונה", sources=[SRC]),
+                   answer.BotReply("answered", "זו התשובה הסופית. טלפון 3455*.", sources=[SRC]))
+        self.ask("שאלה ראשונה")
+        self.ask("שאלה שנייה")
+        labels = [e.label for e in self.at.sidebar.expander]
+        self.assertEqual(labels, [config.COPY_LAST_LABEL, config.COPY_CHAT_LABEL])
+        last, whole = [c.value for c in self.at.sidebar.code]
+        self.assertTrue(last.startswith("זו התשובה הסופית. טלפון 3455*."))
+        self.assertNotIn("תשובה ראשונה", last)
+        self.assertNotIn("שאלה", last)
+        self.assertIn(f"{SRC['url']}#how | נאסף: 04.11.2026", last)
+        self.assertIn("תשובה ראשונה", whole)                                   # the whole-conversation block still has everything
+        self.assertIn("זו התשובה הסופית", whole)
+
+    def test_the_final_answer_area_never_has_developer_details_even_in_developer_mode(self):
+        r = answer.BotReply("answered", "תשובה", sources=[SRC], debug={"rewrite": {"question": "אחרי שכתוב"}, "calls": 1})
+        self.start(r, env={"PHOENIX_DEV": "1"})
+        self.ask("שאלה")
+        last = self.at.sidebar.code[0].value
+        self.assertNotIn("אחרי שכתוב", last)
+        self.assertIn("אחרי שכתוב", self.at.sidebar.code[1].value)
+
+    def test_it_disappears_with_a_new_conversation(self):
+        self.start()
+        self.ask("שאלה")
+        self.at.sidebar.button[0].click().run()
+        self.assertEqual(len(self.at.sidebar.expander), 0)
 
 
 class TestDeveloperMode(AppCase):
