@@ -30,6 +30,7 @@ class Rewrite:
     guard: guardrails.Guard = field(default_factory=guardrails.Guard)
     error: str = ""                      # why the original was kept (empty when nothing went wrong)
     quota_error: bool = False
+    busy: bool = False                   # the limiter would have made the call wait longer than LLM_MAX_WAIT_SEC
 
 
 def looks_like_followup(question: str) -> bool:
@@ -105,6 +106,8 @@ def rewrite(question: str, history: list[dict] | None = None, *, generate=None) 
                 out.error = problem
             else:
                 out.question, out.rewritten = candidate, candidate != question
+        except llm.LLMBusyError as exc:
+            out.error, out.busy = f"busy: {exc}", True
         except llm.LLMQuotaError as exc:
             out.error, out.quota_error = f"quota: {exc}", True
         except llm.LLMError as exc:

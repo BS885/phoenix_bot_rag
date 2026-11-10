@@ -6,6 +6,7 @@ tokens), a per-model daily request counter, and an orderly stop on 429 (never a 
 5xx is retried once; after that LLMError is raised and the caller answers with status "error", never "not_found".
 """
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -15,6 +16,14 @@ from index import embed
 
 class LLMError(Exception):
     """The model could not give a usable answer (API down, broken JSON, quota). Maps to status 'error'."""
+
+
+class LLMBusyError(LLMError):
+    """The per-minute limiter would make the question wait longer than config.LLM_MAX_WAIT_SEC: answer "busy" (status error)."""
+
+    def __init__(self, message: str, wait: float = 0.0):
+        super().__init__(message)
+        self.wait = wait
 
 
 class LLMQuotaError(LLMError):
@@ -57,6 +66,7 @@ class LLM:
         self._usage_dir = Path(usage_dir) if usage_dir else config.LLM_USAGE_PATH.parent
         self._limiters: dict[str, embed.RateLimiter] = {}
         self._usage: dict[str, embed.DailyUsage] = {}
+        self._lock = threading.Lock()          # creation of per-model usage / limiter objects (shared by all threads)
 
     def limits(self, model: str) -> tuple[int, int, int]:
         """(requests/min, tokens/min, requests/day) the bot may use: 80% of RPM/TPM, the daily cap."""
@@ -72,16 +82,18 @@ class LLM:
         return self._backend
 
     def usage(self, model: str) -> "embed.DailyUsage":
-        if model not in self._usage:
-            safe = model.replace("/", "_")
-            self._usage[model] = embed.DailyUsage(self._usage_dir / f"llm_usage_{safe}.json", limit=self.limits(model)[2])
-        return self._usage[model]
+        with self._lock:
+            if model not in self._usage:
+                safe = model.replace("/", "_")
+                self._usage[model] = embed.DailyUsage(self._usage_dir / f"llm_usage_{safe}.json", limit=self.limits(model)[2])
+            return self._usage[model]
 
     def _limiter(self, model: str) -> "embed.RateLimiter":
-        if model not in self._limiters:
-            self._limiters[model] = embed.RateLimiter(*self.limits(model)[:2], clock=self._clock, sleep=self._sleep,
-                                                      on_wait=self._on_wait)
-        return self._limiters[model]
+        with self._lock:
+            if model not in self._limiters:
+                self._limiters[model] = embed.RateLimiter(*self.limits(model)[:2], clock=self._clock, sleep=self._sleep,
+                                                          on_wait=self._on_wait)
+            return self._limiters[model]
 
     def _one_call(self, model: str, prompt: str, system: str | None, schema: dict) -> str:
         usage = self.usage(model)
@@ -90,11 +102,13 @@ class LLM:
         tokens = embed.estimate_tokens(prompt + (system or ""))
 
         def attempt():   # the limiter runs before EVERY attempt, retries included (Google counts each one)
-            self._limiter(model).acquire(1, tokens)
+            self._limiter(model).acquire(1, tokens, max_wait=config.LLM_MAX_WAIT_SEC)
             return self.backend.call(model, prompt, system, schema)
 
         try:
             text = embed.with_retries(attempt, self._sleep, attempts=config.LLM_RETRIES + 1)
+        except embed.RateLimitBusy as busy:
+            raise LLMBusyError(f"busy: {busy}", wait=busy.wait) from busy
         except embed.QuotaStop as stop:
             if stop.daily:
                 usage.set_used(usage.limit)
@@ -123,11 +137,13 @@ class LLM:
 
 
 _default: LLM | None = None
+_default_lock = threading.Lock()
 
 
 def generate(prompt: str, schema: dict, *, system: str | None = None, model: str | None = None) -> dict:
     """Module-level entry point used by the rest of the bot (CLAUDE.md contract)."""
     global _default
-    if _default is None:
-        _default = LLM()
+    with _default_lock:
+        if _default is None:
+            _default = LLM()
     return _default.generate(prompt, schema, system=system, model=model)

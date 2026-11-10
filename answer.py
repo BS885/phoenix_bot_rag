@@ -46,7 +46,8 @@ def _unique_sources(prompt_sources: list[dict], used: list[int]) -> list[dict]:
             key = src["url"]
             if key not in seen:
                 seen.add(key)
-                out.append({"title": src.get("title") or s["title"], "url": src["url"], "anchor": src.get("anchor", "")})
+                out.append({"title": src.get("title") or s["title"], "url": src["url"], "anchor": src.get("anchor", ""),
+                            "collected_at": src.get("collected_at", "")})
     return out
 
 
@@ -64,6 +65,8 @@ def _join_options(names: list[str]) -> str:
 
 
 def _error(exc: Exception | None, debug: dict) -> BotReply:
+    if isinstance(exc, llm.LLMBusyError):             # waiting would take too long: a fixed "busy" message, no call was made
+        return BotReply("error", config.BUSY_TEXT, debug={**debug, "error": str(exc)[:300], "quota": False, "busy": True})
     quota = isinstance(exc, llm.LLMQuotaError)
     text = config.ERROR_TEXT
     if quota:
@@ -83,8 +86,10 @@ def _caveats(text: str, guard: guardrails.Guard, model_coverage: bool, model_per
 
 # ---------- the flow ----------
 
-def answer(question: str, history: list[dict] | None = None, *, retriever=None, generate=None) -> BotReply:
-    """history: [{"role": "user" | "bot", "text": str, "status": str (bot turns)}]. `retriever` and `generate` are injectable."""
+def answer(question: str, history: list[dict] | None = None, *, retriever=None, generate=None,
+           products: list[str] | None = None) -> BotReply:
+    """history: [{"role": "user" | "bot", "text": str, "status": str (bot turns)}]. `retriever` and `generate` are injectable;
+    `products` = slugs chosen by the person on a clarify button."""
     # Personal details never leave the process: the question and the history are masked here, whatever the caller did
     masked = privacy.mask(question)
     question = masked.text
@@ -108,12 +113,16 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
 
     # 1. rewrite + guardrails
     rw = rewrite_mod.rewrite(question, history, generate=generate)
+    if products:                          # the person picked a product on the clarify buttons: it wins over inheritance
+        rw.products, rw.inherited_product = list(products), False
     debug["calls"] += int(rw.called_model)
     debug["rewrite"] = {"question": rw.question, "rewritten": rw.rewritten, "error": rw.error,
                         "inherited_product": rw.inherited_product, "products": rw.products}
     guard = rw.guard
     debug["guard"] = {"kind": guard.kind, "coverage": guard.coverage, "suspected_personal": guard.suspected_personal,
                       "matched": guard.matched}
+    if rw.busy:
+        return _error(llm.LLMBusyError(rw.error), debug)
     if rw.quota_error:
         return _error(llm.LLMQuotaError(rw.error, daily="daily" in rw.error), debug)
 

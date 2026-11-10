@@ -55,7 +55,7 @@ def personal_reply() -> tuple[str, list[dict]]:
     """The fixed answer to a pure-personal question (kind "personal"): text from config, plus its source page."""
     text = config.PERSONAL_REPLY.format(**config.PERSONAL_FACTS)
     src = config.PERSONAL_FACTS_SOURCE
-    return text, [{"title": src["page_title_section"], "url": src["page_url"], "anchor": ""}]
+    return text, [{"title": src["page_title_section"], "url": src["page_url"], "anchor": "", "collected_at": ""}]
 
 
 def classify(question: str) -> Guard:

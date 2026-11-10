@@ -311,3 +311,18 @@ STYLE_RETRY_NOTE = "הערה: נסחו מחדש את הטענות בלשון ר�
 CITATION_RETRY_NOTE = "הערה: הציטוט חייב להיות מועתק מילה במילה מהמקור, בלי קיצור."
 CLAIM_STRENGTH_WORDS = ("מומלץ", "כדאי")   # a claim text with one of these needs the same word in its quote
 CLAIM_MIN_OVERLAP = 0.3              # a claim's text must share at least this share of word stems with its quote (verify.overlap)
+
+# --- UI (stage 6). Fixed texts only: nothing here is written by the model. ---
+MISSING_NOTE = "ייתכן שחלק מהפרטים שנשאלו אינם מופיעים במידע שאליו יש לי גישה. ניתן לפנות לשירות הלקוחות להשלמה."
+FOOTER_NOTE = "מידע כללי מאתר הפניקס בלבד. אינו מהווה ייעוץ או אישור כיסוי."
+SOURCES_NOTE = "התוכן נאסף מהאתר בתאריכים הנקובים; ייתכנו שינויים באתר מאז."
+BUSY_TEXT = "המערכת עמוסה כרגע. אפשר לנסות שוב בעוד דקה."
+EMPTY_QUESTION_TEXT = "אפשר להקליד שאלה על ביטוח, פנסיה וחיסכון באתר הפניקס."
+TOO_LONG_TEXT = "השאלה ארוכה מדי. אפשר לקצר אותה ולנסות שוב."
+MAX_QUESTION_CHARS = 500
+OPENING_TEXT = ("אפשר לשאול כאן על ביטוח, פנסיה וחיסכון, ואענה אך ורק מתוך המידע הציבורי באתר הפניקס. "
+                "אין להזין פרטים אישיים (תעודת זהות, טלפון, מייל).")
+EXAMPLE_QUESTIONS: tuple = ()            # chosen in 6.3, only after each one was run for real and returned a sourced answer
+LLM_MAX_WAIT_SEC = 20                    # the limiter never makes a question wait longer than this: BUSY_TEXT instead
+CHAT_LOG_ENABLED = False                 # off in the demo; PHOENIX_CHAT_LOG=1 (environment only) turns it on for tuning
+CHAT_LOG_PATH = ROOT / "logs" / "chat.jsonl"

@@ -9,6 +9,7 @@ import math
 import os
 import sqlite3
 import struct
+import threading
 import time
 from pathlib import Path
 
@@ -17,6 +18,14 @@ import config
 
 class EmbeddingError(Exception):
     pass
+
+
+class RateLimitBusy(EmbeddingError):
+    """The limiter would have to make the caller wait longer than `max_wait` seconds: the caller answers "busy" instead."""
+
+    def __init__(self, message: str, wait: float):
+        super().__init__(message)
+        self.wait = wait
 
 
 class QuotaStop(EmbeddingError):
@@ -75,37 +84,42 @@ class EmbedCache:
     def __init__(self, path: Path | str):
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(path))
+        # Streamlit runs the script in several threads: one connection shared under a lock
+        self._lock = threading.RLock()
+        self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.db.execute("CREATE TABLE IF NOT EXISTS emb (key TEXT PRIMARY KEY, dim INTEGER, vec BLOB, created_at TEXT)")
         self.db.commit()
 
     def get_many(self, keys: list[str]) -> dict[str, list[float]]:
         out = {}
-        for i in range(0, len(keys), 500):
-            part = keys[i:i + 500]
-            marks = ",".join("?" * len(part))
-            for key, dim, blob in self.db.execute(f"SELECT key, dim, vec FROM emb WHERE key IN ({marks})", part):
-                out[key] = list(struct.unpack(f"{dim}f", blob))
+        with self._lock:
+            for i in range(0, len(keys), 500):
+                part = keys[i:i + 500]
+                marks = ",".join("?" * len(part))
+                for key, dim, blob in self.db.execute(f"SELECT key, dim, vec FROM emb WHERE key IN ({marks})", part):
+                    out[key] = list(struct.unpack(f"{dim}f", blob))
         return out
 
     def present(self, keys: list[str]) -> set[str]:
         """Which of these keys are cached (no vectors loaded)."""
         out: set[str] = set()
-        for i in range(0, len(keys), 500):
-            part = keys[i:i + 500]
-            marks = ",".join("?" * len(part))
-            out.update(k for (k,) in self.db.execute(f"SELECT key FROM emb WHERE key IN ({marks})", part))
+        with self._lock:
+            for i in range(0, len(keys), 500):
+                part = keys[i:i + 500]
+                marks = ",".join("?" * len(part))
+                out.update(k for (k,) in self.db.execute(f"SELECT key FROM emb WHERE key IN ({marks})", part))
         return out
 
     def put_many(self, items: dict[str, list[float]]) -> None:
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
-        self.db.executemany(
-            "INSERT OR REPLACE INTO emb VALUES (?, ?, ?, ?)",
-            [(k, len(v), struct.pack(f"{len(v)}f", *v), now) for k, v in items.items()])
-        self.db.commit()
+        rows = [(k, len(v), struct.pack(f"{len(v)}f", *v), now) for k, v in items.items()]
+        with self._lock:
+            self.db.executemany("INSERT OR REPLACE INTO emb VALUES (?, ?, ?, ?)", rows)
+            self.db.commit()
 
     def close(self) -> None:
-        self.db.close()
+        with self._lock:
+            self.db.close()
 
 
 # ---------- Gemini ----------
@@ -183,21 +197,26 @@ class RateLimiter:
         self.rpm, self.tpm = rpm or config.EMBED_RPM, tpm or config.EMBED_TPM
         self.clock, self.sleep, self.on_wait = clock, sleep, on_wait
         self.events: list[tuple[float, int, int]] = []
+        self._lock = threading.Lock()          # the window is shared by every thread; sleeping happens outside the lock
 
-    def acquire(self, texts: int, tokens: int) -> float:
-        """Wait until `texts` and `tokens` fit in the last minute, then record them. Returns seconds waited."""
+    def acquire(self, texts: int, tokens: int, max_wait: float | None = None) -> float:
+        """Wait until `texts` and `tokens` fit in the last minute, then record them. Returns seconds waited.
+        With `max_wait`: a wait that would push the TOTAL beyond it raises RateLimitBusy before sleeping."""
         if texts > self.rpm or tokens > self.tpm:
             raise EmbeddingError(f"one request ({texts} texts, ~{tokens} tokens) exceeds the per-minute quota "
                                  f"({self.rpm} texts, {self.tpm} tokens)")
         waited = 0.0
         while True:
-            now = self.clock()
-            self.events = [e for e in self.events if now - e[0] < 60]
-            if (sum(e[1] for e in self.events) + texts <= self.rpm
-                    and sum(e[2] for e in self.events) + tokens <= self.tpm):
-                self.events.append((now, texts, tokens))
-                return waited
-            delay = max(60 - (now - self.events[0][0]), 0) + 0.5
+            with self._lock:
+                now = self.clock()
+                self.events = [e for e in self.events if now - e[0] < 60]
+                if (sum(e[1] for e in self.events) + texts <= self.rpm
+                        and sum(e[2] for e in self.events) + tokens <= self.tpm):
+                    self.events.append((now, texts, tokens))
+                    return waited
+                delay = max(60 - (now - self.events[0][0]), 0) + 0.5
+            if max_wait is not None and waited + delay > max_wait:
+                raise RateLimitBusy(f"the rate limiter would wait {waited + delay:.0f}s (cap {max_wait:.0f}s)", waited + delay)
             if self.on_wait:
                 self.on_wait(delay)
             self.sleep(delay)
@@ -212,6 +231,7 @@ class DailyUsage:
         self.limit = limit or config.EMBED_RPD
         self.today = today or self.pacific_date()
         self.used = 0
+        self._lock = threading.Lock()
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             if data.get("date") == self.today:
@@ -233,12 +253,14 @@ class DailyUsage:
         return max(self.limit - self.used, 0)
 
     def set_used(self, n: int) -> None:
-        self.used = n
-        self._save()
+        with self._lock:
+            self.used = n
+            self._save()
 
     def add(self, n: int) -> None:
-        self.used += n
-        self._save()
+        with self._lock:
+            self.used += n
+            self._save()
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

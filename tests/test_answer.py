@@ -16,7 +16,7 @@ def hit(path="/claims-customer-service/claims-health-insurance/x/", section="א�
         n=0, page="הגשת תביעה"):
     return {"id": f"id{n}", "text": f"{page} > {section}\n{body}", "url": H + path, "page_title": page,
             "section_title": section, "anchor": "how", "distance": dist, "short": False, "dup_urls": "",
-            "section_id": f"sec{n}"}
+            "section_id": f"sec{n}", "collected_at": "2026-11-04T10:00:00+00:00"}
 
 
 class FakeRetriever:
@@ -98,7 +98,7 @@ class TestAnswered(unittest.TestCase):
         self.assertEqual(out.status, "answered")
         self.assertEqual(out.text, "יש למלא את הטופס באתר. הטיפול נמשך עד 30 ימי עבודה.")
         self.assertEqual(out.sources, [{"title": "הגשת תביעה", "url": H + "/claims-customer-service/claims-health-insurance/x/",
-                                        "anchor": "how"}])
+                                        "anchor": "how", "collected_at": "2026-11-04T10:00:00+00:00"}])
         self.assertEqual((len(gen.calls), gen.calls[0]["model"]), (1, config.LLM_MODEL_ANSWER))
         self.assertIn("<שאלה>איך מגישים תביעה בביטוח בריאות?</שאלה>", gen.calls[0]["prompt"])
 
@@ -111,6 +111,7 @@ class TestAnswered(unittest.TestCase):
         h["dup_urls"] = H + "/claims-customer-service/claims-car-insurance/x/"
         out, _ = run(Q, Gen(reply()), hits=[h])
         self.assertEqual(len(out.sources), 2)
+        self.assertEqual({x["collected_at"] for x in out.sources}, {"2026-11-04T10:00:00+00:00"})   # the duplicate shows the primary's date
 
     def test_only_the_sources_of_valid_claims_are_listed(self):
         hits = [hit(n=0), hit("/claims-customer-service/claims-health-insurance/y/", section="אחר", dist=0.21, n=1,
@@ -445,6 +446,40 @@ class TestErrors(unittest.TestCase):
     def test_error_texts_do_not_say_not_found(self):
         for t in (config.ERROR_TEXT, config.ERROR_QUOTA_TEXT, config.ERROR_QUOTA_DAILY_TEXT):
             self.assertNotIn("לא מצאתי", t)
+
+
+class TestBusyAndChosenProduct(unittest.TestCase):
+    def test_a_busy_limiter_is_an_error_with_the_fixed_busy_text_not_a_quota_text(self):
+        out, _ = run(Q, Gen(llm.LLMBusyError("busy: the rate limiter would wait 42s (cap 20s)", wait=42)))
+        self.assertEqual((out.status, out.text), ("error", config.BUSY_TEXT))
+        self.assertTrue(out.debug["busy"])
+        self.assertFalse(out.debug["quota"])
+
+    def test_busy_in_the_rewrite_stops_before_the_answer_call(self):
+        hist = [{"role": "user", "text": "איך מגישים תביעה בביטוח בריאות?"}, {"role": "bot", "text": "x", "status": "answered"}]
+        gen = Gen(llm.LLMBusyError("busy: wait", wait=30))
+        out, ret = run("ומה לצרף?", gen, history=hist)
+        self.assertEqual((out.status, out.text, len(gen.calls), ret.calls), ("error", config.BUSY_TEXT, 1, []))
+
+    def test_busy_text_and_the_daily_quota_text_are_different_messages(self):
+        self.assertNotEqual(config.BUSY_TEXT, config.ERROR_QUOTA_DAILY_TEXT)
+        self.assertNotEqual(config.BUSY_TEXT, config.ERROR_QUOTA_TEXT)
+
+    def test_a_product_chosen_on_the_clarify_buttons_wins_and_avoids_a_second_clarify(self):
+        hits = [hit("/claims-customer-service/claims-health-insurance/x/", dist=0.200, n=0),
+                hit("/claims-customer-service/claims-car-insurance/y/", dist=0.210, n=1,
+                    body=BODY + " ובמקרה של רכב יש לצרף רישיון נהיגה ותעודת ביטוח")]
+        ret = FakeRetriever(hits)
+        out = a.answer("איך מגישים תביעה?", [{"role": "user", "text": "איך מגישים תביעה?"},
+                                              {"role": "bot", "text": "על איזה תחום?", "status": "clarify"}],
+                       retriever=ret, generate=Gen({"question": "איך מגישים תביעה?"}, reply()), products=["car-insurance"])
+        self.assertNotEqual(out.status, "clarify")
+        self.assertEqual(ret.calls[0][1], ["car-insurance"])
+        self.assertFalse(out.debug["rewrite"]["inherited_product"])
+
+    def test_without_the_parameter_nothing_changes(self):
+        out, ret = run(Q, Gen(reply()))
+        self.assertEqual(ret.calls[0][1], ["health-insurance"])
 
 
 class TestHistoryAndRewrite(unittest.TestCase):

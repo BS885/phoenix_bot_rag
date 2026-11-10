@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import config
@@ -76,6 +77,7 @@ class TestGenerate(unittest.TestCase):
             m.generate("p", SCHEMA)
         self.assertEqual(len(b.calls), 2)
 
+    @mock.patch.object(config, "LLM_MAX_WAIT_SEC", 1000)        # this test is about waiting; the cap has its own tests
     def test_per_minute_request_limit_waits(self):
         slept, now = [], [0.0]
         d = Path(tempfile.mkdtemp())
@@ -122,6 +124,41 @@ class TestModelLimits(unittest.TestCase):
         with self.assertRaises(llm.LLMQuotaError) as cm:
             m.generate("p", SCHEMA)
         self.assertIsInstance(cm.exception, llm.LLMError)       # -> status "error", never not_found
+
+
+class TestWaitCap(unittest.TestCase):
+    def make(self, now, **kw):
+        slept = []
+        m = llm.LLM(FakeBackend(['{"a": "x"}'] * 5), sleep=lambda s: (slept.append(s), now.__setitem__(0, now[0] + s)),
+                    clock=lambda: now[0], usage_dir=tempfile.mkdtemp(), **kw)
+        return m, slept
+
+    def test_a_wait_over_the_cap_is_busy_without_a_call_and_without_counting(self):
+        now = [0.0]
+        m, slept = self.make(now, rpm=1)
+        m.generate("p", SCHEMA)                                   # fills the minute
+        calls_before = len(m.backend.calls)
+        with self.assertRaises(llm.LLMBusyError) as cm:
+            m.generate("p", SCHEMA)                               # would wait ~60s > 20s
+        self.assertGreater(cm.exception.wait, config.LLM_MAX_WAIT_SEC)
+        self.assertEqual((slept, len(m.backend.calls), m.usage(config.LLM_MODEL_ANSWER).used), ([], calls_before, 1))
+
+    def test_a_short_wait_under_the_cap_still_sleeps_and_succeeds(self):
+        now = [0.0]
+        m, slept = self.make(now, rpm=2)
+        m.generate("p", SCHEMA)
+        m.generate("p", SCHEMA)
+        now[0] = 45.0                                             # the oldest call leaves the window in ~15s
+        m.generate("p", SCHEMA)
+        self.assertEqual(len(slept), 1)
+        self.assertLessEqual(slept[0], config.LLM_MAX_WAIT_SEC)
+
+    def test_the_cap_is_in_config(self):
+        self.assertEqual(config.LLM_MAX_WAIT_SEC, 20)
+
+    def test_busy_is_not_a_quota_error_and_is_an_llm_error(self):
+        self.assertTrue(issubclass(llm.LLMBusyError, llm.LLMError))
+        self.assertFalse(issubclass(llm.LLMBusyError, llm.LLMQuotaError))
 
 
 if __name__ == "__main__":

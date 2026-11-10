@@ -127,7 +127,14 @@ class Retrieval:
 
 
 def _source(hit: dict) -> dict:
-    return {"title": hit["page_title"], "url": hit["url"], "anchor": hit.get("anchor", "")}
+    return {"title": hit["page_title"], "url": hit["url"], "anchor": hit.get("anchor", ""),
+            "collected_at": hit.get("collected_at", "")}
+
+
+def _dup_sources(hit: dict) -> list[dict]:
+    """The other pages that held the same text: they show the collection date of the primary page (owner decision)."""
+    return [{"title": "", "url": u, "anchor": "", "collected_at": hit.get("collected_at", "")}
+            for u in hit.get("dup_urls", "").split("|") if u]
 
 
 def has_claim_word(question: str) -> bool:
@@ -173,12 +180,12 @@ def process_hits(question: str, hits: list[dict], *, min_words: int | None = Non
             if same_section or ((g.topic, _last_section(g.section_title)) == key and
                                 _similarity(_body(g.text), _body(h["text"])) >= config.RETRIEVE_GROUP_MIN_SIMILARITY):
                 g.size += 1
-                for s in [_source(h)] + [{"title": "", "url": u, "anchor": ""} for u in h.get("dup_urls", "").split("|") if u]:
+                for s in [_source(h)] + _dup_sources(h):
                     if s["url"] not in {x["url"] for x in g.sources}:
                         g.sources.append(s)
                 break
         else:
-            sources = [_source(h)] + [{"title": "", "url": u, "anchor": ""} for u in h.get("dup_urls", "").split("|") if u]
+            sources = [_source(h)] + _dup_sources(h)
             groups.append(Group(text=h["text"], url=h["url"], anchor=h.get("anchor", ""), page_title=h["page_title"],
                                 section_title=h["section_title"], topic=h["topic"], topic_name=topic_name(h["topic"]),
                                 distance=h["distance"], short=bool(h.get("short")), sources=sources,
