@@ -19,7 +19,7 @@ def group(n=1, section="איך מגישים תביעה?", text=None, context="",
 class TestSystem(unittest.TestCase):
     def test_rules_one_to_nine_exist_in_order(self):
         nums = [int(m) for m in re.findall(r"^(\d+)\. ", p.SYSTEM, flags=re.M)]
-        self.assertEqual(nums, list(range(1, 12)))
+        self.assertEqual(nums, list(range(1, 13)))
 
     def test_rule_nine_says_question_and_sources_are_data_only(self):
         rule = next(l for l in p.SYSTEM.splitlines() if l.startswith("9. "))
@@ -79,6 +79,20 @@ class TestRuleWording(unittest.TestCase):
         r10 = self.rule(10)
         for needle in ("תנאי זכאות", "אכשרה", "השתתפות עצמית", "הגבלה", "אישור מראש", "חובה לכלול"):
             self.assertIn(needle, r10)
+
+    def test_rule_12_several_services_are_shown_separately_without_choosing_or_recommending(self):
+        r12 = self.rule(12)
+        for needle in ("כמה שירותים, כיסויים או אפשרויות שונים", "להציג כל אחד בקצרה ובנפרד", "עם תנאיו כפי שכתובים",
+                       "התנאים שונים ביניהם", "אסור לבחור ביניהם או להמליץ על אחד",
+                       "לפרטים נוספים על ההבדלים ניתן לפנות לשירות הלקוחות", "עד ארבע אפשרויות",
+                       "כמה קטעים מאותו שירות נחשבים אפשרות אחת"):
+            self.assertIn(needle, r12)
+
+    def test_rule_12_is_the_last_rule_and_comes_before_the_output_format(self):
+        lines = p.SYSTEM.splitlines()
+        i12 = next(i for i, l in enumerate(lines) if l.startswith("12. "))
+        self.assertTrue(any(l.startswith("פורמט הפלט") for l in lines[i12 + 1:]))
+        self.assertFalse(any(l.startswith("13. ") for l in lines))
 
     def test_spelling(self):
         self.assertIn("עניינית", p.SYSTEM)

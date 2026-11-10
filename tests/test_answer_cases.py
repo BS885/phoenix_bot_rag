@@ -37,5 +37,22 @@ class TestA1(unittest.TestCase):
         self.assertTrue(all(m["any_of"] for m in a1["must_mention"]))
 
 
+class TestConversations(unittest.TestCase):
+    def test_two_doctor_conversations_are_permanent_cases(self):
+        import json
+        convs = json.loads((ROOT / "eval" / "answer_cases.json").read_text(encoding="utf-8"))["conversations"]
+        self.assertEqual([c["id"] for c in convs], ["c1", "c2"])
+        c1, c2 = convs
+        self.assertEqual([t["user"] for t in c1["turns"]], ["מה זה כיסוי אמבולטורי?", "יש שם ייעוץ עם רופא?"])
+        self.assertEqual(c1["turns"][1]["expected_status"], ["answered"])
+        self.assertEqual(len(c1["turns"][1]["must_mention"]), 2)
+        self.assertEqual([t["user"] for t in c2["turns"]], ["מה הכיסוי לייעוץ עם רופא?", "ואם אני רוצה רופא שלא בהסדר?"])
+        self.assertGreaterEqual(c2["turns"][0]["min_distinct_services"], 2)
+        self.assertIn("not_found", c2["turns"][1]["forbidden_status"])
+        for t in c2["turns"]:
+            self.assertTrue(set(t["forbidden_words"]) >= {"מומלץ", "עדיף"})
+            self.assertTrue(set(t["expected_status"]) <= STATUSES)
+
+
 if __name__ == "__main__":
     unittest.main()
