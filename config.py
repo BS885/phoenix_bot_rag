@@ -299,6 +299,17 @@ ADVICE_TEXT = ("אין לי אפשרות להמליץ או להכריע מה מ�
 GREETING_TEXT = "שלום! אפשר לשאול כאן על ביטוח, פנסיה וחיסכון באתר הפניקס, למשל איך מגישים תביעה."
 CLARIFY_TEXT = "כדי לענות במדויק, על איזה תחום מדובר: {options}?"
 CLARIFY_MAX_OPTIONS = 3      # options in the clarifying question, from different products, best groups first
+# Ambiguous words: a word that belongs to several products. When a question has such a word and NO product (in the question, in the
+# history or on a button), and no clarify was asked yet, the bot asks which area BEFORE searching or calling the model.
+# The candidates of a word, in this order, are products that can really have an accident / claim case; an option is offered only if
+# the active index holds chunks of that product (claims page preferred over plain product info); at most CLARIFY_MAX_OPTIONS.
+AMBIGUOUS_TERMS = {
+    "תאונה": ("car-insurance",          # an accident on the road: the car claims pages
+              "health-insurance",       # injury or treatment after an accident: the health claims pages
+              "travel-insurance",       # an accident abroad: the travel claims pages
+              "personal-accident"),     # accident insurance: its own claims pages
+}
+AMBIGUOUS_PREFIX_LETTERS = "ובהלמשכ"   # one-letter prefixes allowed before the word (בתאונה, לתאונה, שתאונה...)
 COVERAGE_CAVEAT = ("ההסבר מבוסס על המידע הכללי באתר בלבד ואינו אישור כיסוי או זכאות. "
                    "לבדיקה לפי הפוליסה האישית ניתן לפנות לשירות הלקוחות.")
 SUSPECTED_PERSONAL_CAVEAT = ("אם השאלה נוגעת למקרה אישי, לא ניתן לבדוק אותו כאן. "

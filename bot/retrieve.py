@@ -49,6 +49,34 @@ def detect_products(question: str) -> list[str]:
     return [slug for slug, terms in config.PRODUCT_TERMS.items() if any(t in q for t in terms)]
 
 
+def ambiguous_term(question: str) -> str | None:
+    """The first ambiguous word (config.AMBIGUOUS_TERMS) that appears in the question as a whole word, else None.
+    A one-letter prefix is allowed (בתאונה); longer forms (תאונות, תאונת) are other words and do not count."""
+    for term in config.AMBIGUOUS_TERMS:
+        if re.search(rf"(?<![א-ת])[{config.AMBIGUOUS_PREFIX_LETTERS}]?{re.escape(term)}(?![א-ת])", question):
+            return term
+    return None
+
+
+def ambiguity_options(term: str, availability: dict | None) -> list[dict]:
+    """Options for an ambiguous word: its candidates that exist in the index, at most CLARIFY_MAX_OPTIONS.
+    availability = {topic: {"claims": n, "chunks": n}} (None = unknown: every candidate is offered).
+    Each option says why it was chosen: a claims page exists, or only product information."""
+    out = []
+    for topic in config.AMBIGUOUS_TERMS.get(term, ()):
+        if availability is None:
+            out.append({"topic": topic, "reason": "unchecked"})
+        else:
+            have = availability.get(topic) or {}
+            if have.get("claims"):
+                out.append({"topic": topic, "reason": "claims_page"})
+            elif have.get("chunks"):
+                out.append({"topic": topic, "reason": "product_info"})
+        if len(out) == config.CLARIFY_MAX_OPTIONS:
+            break
+    return out
+
+
 # ---------- hits ----------
 
 def _body(text: str) -> str:
@@ -282,6 +310,18 @@ class Retriever:
         self.col = col if col is not None else bi.get_active_collection()   # stops on a model / dim mismatch
         self.embedder = embedder if embedder is not None else embed.make_embedder()
         self.cache = cache if cache is not None else embed.EmbedCache(config.EMBED_CACHE_PATH)
+
+    def topic_availability(self) -> dict:
+        """{topic: {"claims": chunks from claims pages, "chunks": all chunks}} of the active index; read once, then kept."""
+        if getattr(self, "_availability", None) is None:
+            res = self.col.get(include=["metadatas"])
+            av: dict = {}
+            for md in res["metadatas"]:
+                row = av.setdefault(topic_of(md.get("url", "")), {"claims": 0, "chunks": 0})
+                row["chunks"] += 1
+                row["claims"] += md.get("area") == "claims"
+            self._availability = av
+        return self._availability
 
     def siblings(self, section_id: str) -> list[dict]:
         res = self.col.get(where={"section_id": section_id}, include=["metadatas", "documents"])

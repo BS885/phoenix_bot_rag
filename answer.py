@@ -138,14 +138,26 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
     if guard.kind == "advice":
         return BotReply("advice", config.ADVICE_TEXT, debug=debug)
 
-    # 3. retrieval
+    # 3a. an ambiguous word (e.g. "תאונה") with no product anywhere and no clarify asked yet: ask first, before any search or model call
     if retriever is None:
         retriever = retrieve.Retriever()
+    already_clarified = any(t.get("status") == "clarify" for t in history)
+    term = None if (rw.products or already_clarified) else retrieve.ambiguous_term(rw.question)
+    if term:
+        availability = retriever.topic_availability() if hasattr(retriever, "topic_availability") else None
+        options = retrieve.ambiguity_options(term, availability)
+        if len(options) >= 2:
+            topics = [o["topic"] for o in options]
+            debug["ambiguous"] = {"term": term, "options": options}
+            debug["conflict_topics"] = topics
+            names = [retrieve.topic_name(t) for t in topics]
+            return BotReply("clarify", config.CLARIFY_TEXT.format(options=_join_options(names)), debug=debug)
+
+    # 3b. retrieval
     ret = retriever.retrieve(rw.question, products=rw.products)
     debug["retrieval"] = ret.debug()
     if not ret.groups:
         return BotReply("not_found", config.NOT_FOUND_TEXT, debug=debug)
-    already_clarified = any(t.get("status") == "clarify" for t in history)
     conflict = ret.product_conflict and not already_clarified
 
     # 4. answer call (also on a product conflict: an out-of-scope question must be decided before clarify)

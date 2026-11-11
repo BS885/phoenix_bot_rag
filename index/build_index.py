@@ -284,6 +284,14 @@ def assert_index_compatible(meta: dict) -> None:
                 "rebuild the index (python -m index.build_index)")
 
 
+def active_collection_name() -> str | None:
+    """Name of the collection the manifest points to now (None when there is no usable manifest). Cheap: one small file."""
+    try:
+        return json.loads(config.INDEX_MANIFEST.read_text(encoding="utf-8")).get("collection")
+    except (OSError, ValueError):
+        return None
+
+
 def get_active_collection(client=None):
     """The collection named in the manifest, after the compatibility check."""
     if not config.INDEX_MANIFEST.exists():

@@ -23,6 +23,18 @@ class TestAnswerCases(unittest.TestCase):
         self.assertIn(case["query"], [c["query"] for c in sanity["cases"]])   # the same wording as q3
 
 
+class TestAccidentCases(unittest.TestCase):
+    def test_the_two_accident_questions_are_permanent_clarify_cases_that_hit_an_ambiguous_word(self):
+        from bot import retrieve
+        cases = {c["id"]: c for c in json.loads((ROOT / "eval" / "answer_cases.json").read_text(encoding="utf-8"))["cases"]}
+        self.assertEqual(cases["acc1"]["query"], "היה לי תאונה, אני רוצה להגיש תביעה?")
+        self.assertEqual(cases["acc2"]["query"], "איך מגישים תביעה לתאונה?")
+        for cid in ("acc1", "acc2"):
+            self.assertEqual(cases[cid]["expected_status"], ["clarify"])
+            self.assertEqual(retrieve.ambiguous_term(cases[cid]["query"]), "תאונה")
+            self.assertEqual(retrieve.detect_products(cases[cid]["query"]), [])
+
+
 class TestA1(unittest.TestCase):
     def test_a1_requires_both_stages(self):
         import json

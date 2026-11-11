@@ -361,6 +361,76 @@ class TestDebugKeepsTheRawJson(unittest.TestCase):
         self.assertIn(out.debug["removed_claims"][0]["reason"], ("low_overlap", "unsupported_value"))
 
 
+class AvailRetriever(NoRetrieval):
+    """No search allowed; only the index composition is known."""
+    def __init__(self, availability):
+        self.availability = availability
+
+    def topic_availability(self):
+        return self.availability
+
+
+ALL4 = {"car-insurance": {"claims": 9, "chunks": 40}, "health-insurance": {"claims": 5, "chunks": 60},
+        "travel-insurance": {"claims": 2, "chunks": 20}, "personal-accident": {"claims": 0, "chunks": 3}}
+
+
+class TestAmbiguousTerms(unittest.TestCase):
+    def ask(self, q, availability=ALL4, history=None, products=None):
+        gen = Gen()
+        out = a.answer(q, history, retriever=AvailRetriever(availability), generate=gen, products=products)
+        return out, gen
+
+    def test_the_two_fixed_accident_questions_clarify_before_any_search_or_model_call(self):
+        for q in ("היה לי תאונה, אני רוצה להגיש תביעה?", "איך מגישים תביעה לתאונה?"):
+            out, gen = self.ask(q)
+            self.assertEqual((out.status, len(gen.calls)), ("clarify", 0), q)
+            self.assertEqual(out.debug["conflict_topics"], ["car-insurance", "health-insurance", "travel-insurance"])
+            self.assertIn("ביטוח רכב", out.text)
+            self.assertTrue(out.text.endswith("?"))
+
+    def test_only_products_that_exist_in_the_index_are_offered_and_each_says_why(self):
+        out, _ = self.ask("איך מגישים תביעה לתאונה?", {"car-insurance": {"claims": 0, "chunks": 4}, "travel-insurance": {"claims": 1, "chunks": 2}})
+        self.assertEqual([(o["topic"], o["reason"]) for o in out.debug["ambiguous"]["options"]],
+                         [("car-insurance", "product_info"), ("travel-insurance", "claims_page")])
+
+    def test_one_option_only_is_not_a_question(self):
+        ret = FakeRetriever([hit()])
+        ret.topic_availability = lambda: {"car-insurance": {"claims": 1, "chunks": 1}}
+        out = a.answer("תאונה", None, retriever=ret, generate=Gen(reply()))
+        self.assertNotIn("ambiguous", out.debug)
+        self.assertEqual(len(ret.calls), 1)                                  # it went on to the normal search
+
+    def test_a_product_in_the_question_the_history_or_a_button_skips_it(self):
+        for q, hist, prods in (("תאונה בחו\"ל, איך מגישים תביעה?", None, None),
+                               ("איך מגישים תביעה לתאונה?", [{"role": "user", "text": "שאלה על ביטוח רכב"}], None),
+                               ("איך מגישים תביעה לתאונה?", None, ["car-insurance"])):
+            ret = FakeRetriever([hit()])
+            ret.topic_availability = lambda: ALL4
+            gen = Gen({"question": q}, reply()) if hist else Gen(reply())          # a follow-up is rewritten first
+            out = a.answer(q, hist, retriever=ret, generate=gen, products=prods)
+            self.assertNotIn("ambiguous", out.debug, q)
+
+    def test_it_is_asked_once_not_after_a_clarify(self):
+        hist = [{"role": "user", "text": "איך מגישים תביעה לתאונה?"}, {"role": "bot", "text": "על איזה תחום?", "status": "clarify"}]
+        ret = FakeRetriever([hit()])
+        ret.topic_availability = lambda: ALL4
+        out = a.answer("תאונה", hist, retriever=ret, generate=Gen({"question": "תאונה"}, reply()))
+        self.assertNotIn("ambiguous", out.debug)
+
+    def test_whole_words_only_with_a_one_letter_prefix(self):
+        self.assertEqual(r.ambiguous_term("קרתה לי תאונה"), "תאונה")
+        self.assertEqual(r.ambiguous_term("מה עושים בתאונה?"), "תאונה")
+        for q in ("ביטוח תאונות אישיות", "תאונת עבודה", "איך מגישים תביעה בביטוח בריאות?"):
+            self.assertIsNone(r.ambiguous_term(q), q)
+
+    def test_the_chosen_button_then_goes_to_the_search_with_that_product(self):
+        ret = FakeRetriever([hit("/claims-customer-service/claims-car-insurance/y/")])
+        ret.topic_availability = lambda: ALL4
+        out = a.answer("איך מגישים תביעה לתאונה?", None, retriever=ret, generate=Gen(reply()), products=["car-insurance"])
+        self.assertEqual(out.status, "answered")
+        self.assertEqual(ret.calls[0][1], ["car-insurance"])
+
+
 class TestClarify(unittest.TestCase):
     def two_products(self):
         return [hit("/claims-customer-service/claims-health-insurance/x/", dist=0.200, n=0),

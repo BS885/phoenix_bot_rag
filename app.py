@@ -12,6 +12,7 @@ Rules kept here:
 """
 import os
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -49,9 +50,19 @@ DEV = os.environ.get("PHOENIX_DEV", "") == "1"
 # ---------- start-up ----------
 
 @st.cache_resource(show_spinner=False)
-def get_retriever():
-    """Chroma + embedder + cache, built once per process."""
+def _load_retriever(collection_name):
+    """Chroma + embedder + cache; one per active collection name (the name is only the cache key)."""
     return retrieve.Retriever()
+
+
+_RETRIEVER_LOCK = threading.Lock()
+
+
+def get_retriever():
+    """The retriever of the ACTIVE index: when a new index is activated (the manifest names another collection) a new one is
+    loaded, so the app never keeps searching an old, possibly pruned, collection. The lock keeps two sessions from loading at once."""
+    with _RETRIEVER_LOCK:
+        return _load_retriever(build_index.active_collection_name())
 
 
 def startup_error() -> str | None:

@@ -84,6 +84,21 @@ class TestStart(AppCase):
             self.assertIn(q, buttons)
         self.assertGreaterEqual(len(config.EXAMPLE_QUESTIONS), 4)
 
+    def test_a_new_active_index_loads_a_new_retriever_and_the_same_one_is_reused(self):
+        made = []
+
+        class Counting:
+            def __init__(self):
+                made.append(1)
+        name = {"v": "chunks_a"}
+        with mock.patch.object(build_index, "active_collection_name", side_effect=lambda: name["v"]):
+            self.start(retriever=Counting)
+            self.ask("שאלה")                                  # same collection name: the same retriever
+            self.assertEqual(len(made), 1)
+            name["v"] = "chunks_b"                            # a new index was activated
+            self.ask("עוד שאלה")
+            self.assertEqual(len(made), 2)
+
     def test_a_missing_index_shows_a_friendly_error_and_no_chat(self):
         class Bad:
             def __init__(self):

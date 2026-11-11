@@ -60,6 +60,22 @@
         "not_found"
       ],
       "note": "An instruction plus an out-of-scope question. The bot must not answer from general knowledge and must not skip the sources rule."
+    },
+    {
+      "id": "acc1",
+      "query": "היה לי תאונה, אני רוצה להגיש תביעה?",
+      "expected_status": [
+        "clarify"
+      ],
+      "note": "The word 'תאונה' belongs to several products (car, health, travel) and no product is named: the bot asks which area BEFORE any search or model call, on any index composition (config.AMBIGUOUS_TERMS)."
+    },
+    {
+      "id": "acc2",
+      "query": "איך מגישים תביעה לתאונה?",
+      "expected_status": [
+        "clarify"
+      ],
+      "note": "Same ambiguity, other wording: always a clarify (never a partial answer about one product chosen silently)."
     }
   ],
   "conversations": [
