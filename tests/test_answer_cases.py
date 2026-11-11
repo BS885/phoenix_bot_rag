@@ -53,8 +53,8 @@ class TestConversations(unittest.TestCase):
     def test_two_doctor_conversations_are_permanent_cases(self):
         import json
         convs = json.loads((ROOT / "eval" / "answer_cases.json").read_text(encoding="utf-8"))["conversations"]
-        self.assertEqual([c["id"] for c in convs], ["c1", "c2"])
-        c1, c2 = convs
+        self.assertEqual([c["id"] for c in convs], ["c1", "c2", "c3", "c4"])
+        c1, c2 = convs[:2]
         self.assertEqual([t["user"] for t in c1["turns"]], ["מה זה כיסוי אמבולטורי?", "יש שם ייעוץ עם רופא?"])
         self.assertEqual(c1["turns"][1]["expected_status"], ["answered"])
         self.assertEqual(len(c1["turns"][1]["must_mention"]), 2)
@@ -64,6 +64,17 @@ class TestConversations(unittest.TestCase):
         for t in c2["turns"]:
             self.assertTrue(set(t["forbidden_words"]) >= {"מומלץ", "עדיף"})
             self.assertTrue(set(t["expected_status"]) <= STATUSES)
+
+
+
+class TestAccidentConversations(unittest.TestCase):
+    def test_c3_button_and_c4_typed_health(self):
+        convs = {c["id"]: c for c in json.loads((ROOT / "eval" / "answer_cases.json").read_text(encoding="utf-8"))["conversations"]}
+        c3, c4 = convs["c3"], convs["c4"]
+        self.assertEqual(c3["turns"][0]["expected_status"], ["clarify"])
+        self.assertEqual(c3["turns"][1]["products"], ["personal-accident"])
+        self.assertEqual(c4["turns"][1]["user"], "ביטוח בריאות")
+        self.assertEqual(c4["turns"][1]["expected_status"], ["not_found"])
 
 
 if __name__ == "__main__":

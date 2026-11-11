@@ -26,7 +26,11 @@ _HAS_LINK = re.compile(r"https?://|tel:|mailto:|www\.|@")
 
 def topic_of(url: str) -> str:
     """Product slug of a page: first URL segment, or the second one for claims / customer-service pages."""
-    parts = [p for p in urlparse(url).path.split("/") if p]
+    path = urlparse(url).path
+    for prefix, topic in config.TOPIC_URL_OVERRIDES.items():
+        if path.startswith(prefix):
+            return topic
+    parts = [p for p in path.split("/") if p]
     if not parts:
         return "general"
     first = parts[0]
@@ -41,6 +45,11 @@ def topic_of(url: str) -> str:
 
 def topic_name(topic: str) -> str:
     return config.PRODUCT_NAMES.get(topic) or config.EXTRA_TOPIC_NAMES.get(topic) or topic
+
+
+def search_topics(slugs: list[str]) -> list[str]:
+    """The topics a chosen / named product searches: its group (config.TOPIC_GROUPS), else itself."""
+    return list(dict.fromkeys(t for s in slugs for t in config.TOPIC_GROUPS.get(s, (s,))))
 
 
 def detect_products(question: str) -> list[str]:
@@ -173,7 +182,7 @@ def has_claim_word(question: str) -> bool:
 
 def process_hits(question: str, hits: list[dict], *, min_words: int | None = None,
                  max_groups: int | None = None, products: list[str] | None = None,
-                 claims_bonus: float | None = None) -> Retrieval:
+                 claims_bonus: float | None = None, hard: bool = False) -> Retrieval:
     """Everything after the vector search; pure, so it is testable without an index."""
     max_groups = max_groups or config.RETRIEVE_MAX_GROUPS
     bonus = (config.CLAIMS_AREA_BONUS if claims_bonus is None else claims_bonus) if has_claim_word(question) else 0.0
@@ -192,7 +201,16 @@ def process_hits(question: str, hits: list[dict], *, min_words: int | None = Non
     if not kept:               # never end up with nothing only because everything was short
         kept, out.dropped_short = hits[:1], len(hits) - min(len(hits), 1)
 
-    if detected:
+    if detected and hard:
+        # named in the question / chosen on a button: only that product (and its group) counts; nothing close enough = a miss
+        wanted = search_topics(detected)
+        close = [h for h in kept if h["topic"] in wanted and h["distance"] <= config.RETRIEVE_PRODUCT_MAX_DISTANCE]
+        out.dropped_other_product = len(kept) - len([h for h in kept if h["topic"] in wanted])
+        if not close:
+            out.product_miss, kept = True, []
+        else:
+            kept = [h for h in kept if h["topic"] in wanted]
+    elif detected:
         match = [h for h in kept if h["topic"] in detected or h["topic"] == "general"]
         if any(h["topic"] in detected for h in match):
             out.dropped_other_product = len(kept) - len(match)
@@ -292,9 +310,10 @@ def expand_context(groups: list[Group], fetch_siblings, *, max_section: int | No
 
 # ---------- the index ----------
 
-def query_index(col, vector: list[float], n: int | None = None) -> list[dict]:
+def query_index(col, vector: list[float], n: int | None = None, topics: list[str] | None = None) -> list[dict]:
     n = n or config.RETRIEVE_FETCH
-    res = col.query(query_embeddings=[vector], n_results=min(n, max(col.count(), 1)),
+    where = {"topic": {"$in": list(topics)}} if topics else None          # filter INSIDE the search (metadata "topic")
+    res = col.query(query_embeddings=[vector], n_results=min(n, max(col.count(), 1)), where=where,
                     include=["metadatas", "documents", "distances"])
     hits = []
     for md, doc, dist in zip(res["metadatas"][0], res["documents"][0], res["distances"][0]):
@@ -328,8 +347,20 @@ class Retriever:
         return [{"id": i, "text": d, "chunk_no": int(md.get("chunk_no", 0))}
                 for i, d, md in zip(res["ids"], res["documents"], res["metadatas"])]
 
-    def retrieve(self, question: str, products: list[str] | None = None) -> Retrieval:
+    def has_topic_field(self) -> bool:
+        """An index built before the "topic" field existed cannot filter inside the search (then the old soft filter is used)."""
+        if getattr(self, "_has_topic", None) is None:
+            one = self.col.get(limit=1, include=["metadatas"])["metadatas"]
+            self._has_topic = bool(one) and "topic" in one[0]
+        return self._has_topic
+
+    def retrieve(self, question: str, products: list[str] | None = None, hard: bool = False) -> Retrieval:
+        """hard = the product was named in the question or chosen on a button: the search itself is filtered to it.
+        A product inherited from the conversation (hard=False) stays a soft preference."""
         vector = embed.embed_query(question, self.embedder, self.cache)
-        out = process_hits(question, query_index(self.col, vector), products=products)
+        named = detect_products(question) or list(products or [])
+        use_filter = hard and bool(named) and self.has_topic_field()
+        hits = query_index(self.col, vector, topics=search_topics(named) if use_filter else None)
+        out = process_hits(question, hits, products=products, hard=hard)
         expand_context(out.groups, self.siblings)
         return out

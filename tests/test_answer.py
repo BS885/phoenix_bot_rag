@@ -23,13 +23,13 @@ class FakeRetriever:
     def __init__(self, hits):
         self.hits, self.calls = hits, []
 
-    def retrieve(self, question, products=None):
+    def retrieve(self, question, products=None, hard=False):
         self.calls.append((question, products))
-        return r.process_hits(question, [dict(h) for h in self.hits], products=products)
+        return r.process_hits(question, [dict(h) for h in self.hits], products=products, hard=hard)
 
 
 class NoRetrieval:
-    def retrieve(self, question, products=None):
+    def retrieve(self, question, products=None, hard=False):
         raise AssertionError("retrieval must not run")
 
 
@@ -371,7 +371,7 @@ class AvailRetriever(NoRetrieval):
 
 
 ALL4 = {"car-insurance": {"claims": 9, "chunks": 40}, "health-insurance": {"claims": 5, "chunks": 60},
-        "travel-insurance": {"claims": 2, "chunks": 20}, "personal-accident": {"claims": 0, "chunks": 3}}
+        "travel-insurance": {"claims": 2, "chunks": 20}, "personal-accident": {"claims": 6, "chunks": 8}}
 
 
 class TestAmbiguousTerms(unittest.TestCase):
@@ -384,8 +384,10 @@ class TestAmbiguousTerms(unittest.TestCase):
         for q in ("היה לי תאונה, אני רוצה להגיש תביעה?", "איך מגישים תביעה לתאונה?"):
             out, gen = self.ask(q)
             self.assertEqual((out.status, len(gen.calls)), ("clarify", 0), q)
-            self.assertEqual(out.debug["conflict_topics"], ["car-insurance", "health-insurance", "travel-insurance"])
+            self.assertEqual(out.debug["conflict_topics"], ["car-insurance", "personal-accident", "travel-insurance"])
             self.assertIn("ביטוח רכב", out.text)
+            self.assertIn("ביטוח תאונות אישיות", out.text)
+            self.assertNotIn("בריאות", out.text)
             self.assertTrue(out.text.endswith("?"))
 
     def test_only_products_that_exist_in_the_index_are_offered_and_each_says_why(self):
@@ -429,6 +431,31 @@ class TestAmbiguousTerms(unittest.TestCase):
         out = a.answer("איך מגישים תביעה לתאונה?", None, retriever=ret, generate=Gen(reply()), products=["car-insurance"])
         self.assertEqual(out.status, "answered")
         self.assertEqual(ret.calls[0][1], ["car-insurance"])
+
+
+class TestHardProductInTheFlow(unittest.TestCase):
+    def hits(self):
+        return [hit("/claims-customer-service/claims-car-insurance/a/", dist=0.223, n=0),
+                hit("/claims-customer-service/claims-personal-accident-insurance/", dist=0.27, n=1)]
+
+    def test_a_button_choice_filters_and_answers_from_that_product_only(self):
+        ret = FakeRetriever(self.hits())
+        out = a.answer("היה לי תאונה, אני רוצה להגיש תביעה?", None, retriever=ret, generate=Gen(reply()), products=["personal-accident"])
+        self.assertEqual(out.status, "answered")
+        self.assertEqual([g["topic"] for g in out.debug["retrieval"]["groups"]], ["personal-accident"])
+
+    def test_a_named_product_with_nothing_close_is_not_found_and_makes_no_model_call(self):
+        gen = Gen()
+        out = a.answer("איך מגישים תביעה בביטוח בריאות?", None, retriever=FakeRetriever(self.hits()), generate=gen)
+        self.assertEqual((out.status, len(gen.calls)), ("not_found", 0))
+        self.assertTrue(out.debug["product_miss"])
+        self.assertEqual(out.text, config.NOT_FOUND_TEXT)
+
+    def test_a_product_inherited_from_the_history_stays_soft(self):
+        hist = [{"role": "user", "text": "ספרו לי על ביטוח בריאות"}, {"role": "bot", "text": "x", "status": "answered"}]
+        out = a.answer("ומה לגבי תאונה?", hist, retriever=FakeRetriever(self.hits()),
+                       generate=Gen({"question": "ומה לגבי תאונה?"}, reply()))
+        self.assertEqual(out.status, "answered")                                  # fell back to the other products (soft)
 
 
 class TestClarify(unittest.TestCase):

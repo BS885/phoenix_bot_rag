@@ -154,9 +154,12 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
             return BotReply("clarify", config.CLARIFY_TEXT.format(options=_join_options(names)), debug=debug)
 
     # 3b. retrieval
-    ret = retriever.retrieve(rw.question, products=rw.products)
+    # a product named in the question or chosen on a button filters the search; one inherited from the history stays a soft preference
+    hard = bool(products) or bool(retrieve.detect_products(rw.question))
+    ret = retriever.retrieve(rw.question, products=rw.products, hard=hard)
     debug["retrieval"] = ret.debug()
     if not ret.groups:
+        debug["product_miss"] = ret.product_miss          # nothing of the named product is close enough: not_found, no model call
         return BotReply("not_found", config.NOT_FOUND_TEXT, debug=debug)
     conflict = ret.product_conflict and not already_clarified
 

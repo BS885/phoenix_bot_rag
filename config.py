@@ -197,6 +197,7 @@ PRODUCT_TERMS = {
     "mortgage-insurance": ("משכנתא", "משכנתה"),
     "pets-insurance": ("חיות מחמד", "כלב", "חתול"),
     "business-insurance": ("ביטוח עסק", "ביטוח עסקים"),
+    "personal-accident": ("תאונות אישיות", "ביטוח תאונות"),
 }
 
 # --- language model (stage 5) ---
@@ -305,10 +306,19 @@ CLARIFY_MAX_OPTIONS = 3      # options in the clarifying question, from differen
 # the active index holds chunks of that product (claims page preferred over plain product info); at most CLARIFY_MAX_OPTIONS.
 AMBIGUOUS_TERMS = {
     "תאונה": ("car-insurance",          # an accident on the road: the car claims pages
-              "health-insurance",       # injury or treatment after an accident: the health claims pages
-              "travel-insurance",       # an accident abroad: the travel claims pages
-              "personal-accident"),     # accident insurance: its own claims pages
+              "personal-accident",      # injury after an accident: accident insurance (owner decision: no "health" option,
+                                        # the health claims pages say nothing about accidents)
+              "travel-insurance"),      # an accident abroad: the travel claims pages
 }
+# A chosen option searches these topics (a group); a topic without an entry searches only itself. Health is NOT in the personal-accident
+# group and the other way round (owner decision): typing health after the clarify gets health pages only.
+TOPIC_GROUPS = {"personal-accident": ("personal-accident",)}
+# Pages whose product is not the first URL segment: path prefix -> topic (accident insurance sits under /health-insurance/ on the site).
+TOPIC_URL_OVERRIDES = {"/health-insurance/personal-accidents/": "personal-accident",
+                       "/health-insurance/health_information/dangerous-hobby/": "personal-accident"}
+# A product named in the question or chosen on a button filters the SEARCH (metadata "topic"). When none of its chunks is closer than
+# this, the answer is not_found with no model call (same coarse threshold as the clarify: nothing from that product is really close).
+RETRIEVE_PRODUCT_MAX_DISTANCE = 0.30
 AMBIGUOUS_PREFIX_LETTERS = "ובהלמשכ"   # one-letter prefixes allowed before the word (בתאונה, לתאונה, שתאונה...)
 COVERAGE_CAVEAT = ("ההסבר מבוסס על המידע הכללי באתר בלבד ואינו אישור כיסוי או זכאות. "
                    "לבדיקה לפי הפוליסה האישית ניתן לפנות לשירות הלקוחות.")

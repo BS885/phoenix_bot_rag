@@ -28,7 +28,20 @@ class TestTopics(unittest.TestCase):
 
     def test_every_term_table_product_is_a_known_product(self):
         for slug in config.PRODUCT_TERMS:
-            self.assertIn(slug, config.PRODUCT_NAMES)
+            self.assertTrue(slug in config.PRODUCT_NAMES or slug in config.EXTRA_TOPIC_NAMES, slug)
+
+    def test_the_accident_insurance_pages_under_health_belong_to_personal_accident(self):
+        H = "https://www.fnx.co.il"
+        self.assertEqual(r.topic_of(H + "/health-insurance/personal-accidents/"), "personal-accident")
+        self.assertEqual(r.topic_of(H + "/health-insurance/health_information/dangerous-hobby/"), "personal-accident")
+        self.assertEqual(r.topic_of(H + "/claims-customer-service/claims-personal-accident-insurance/"), "personal-accident")
+        self.assertEqual(r.topic_of(H + "/health-insurance/health_information/other/"), "health-insurance")
+        self.assertEqual(r.detect_products("מה מכסה ביטוח תאונות אישיות?"), ["personal-accident"])
+
+    def test_a_group_expands_a_chosen_product_and_health_is_not_in_it(self):
+        self.assertEqual(r.search_topics(["personal-accident"]), ["personal-accident"])
+        self.assertEqual(r.search_topics(["health-insurance"]), ["health-insurance"])
+        self.assertEqual(r.search_topics(["car-insurance", "car-insurance"]), ["car-insurance"])
 
     def test_detect_products(self):
         self.assertEqual(r.detect_products("איך מגישים תביעה אחרי תאונת דרכים בביטוח רכב?"), ["car-insurance"])
@@ -270,3 +283,57 @@ class TestClaimsAreaBonus(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHardProductFilter(unittest.TestCase):
+    def hits(self):
+        def h(path, d, n):
+            return {"id": f"i{n}", "text": f"עמוד > מקטע {n}\n" + "מילה " * 20, "url": "https://www.fnx.co.il" + path, "page_title": "עמוד",
+                    "section_title": f"מקטע {n}", "anchor": "", "distance": d, "short": False, "dup_urls": "", "section_id": f"s{n}",
+                    "collected_at": "2026-11-04T10:00:00+00:00", "area": "claims"}
+        return [h("/claims-customer-service/claims-car-insurance/a/", 0.22, 1),
+                h("/claims-customer-service/claims-personal-accident-insurance/", 0.28, 2),
+                h("/claims-customer-service/claims-health-insurance/b/", 0.40, 3)]
+
+    def test_hard_keeps_only_the_chosen_product(self):
+        out = r.process_hits("שאלה", self.hits(), products=["personal-accident"], hard=True)
+        self.assertEqual([g.topic for g in out.groups], ["personal-accident"])
+        self.assertFalse(out.product_miss)
+
+    def test_hard_with_nothing_close_enough_is_a_miss_with_no_groups_not_a_fallback_to_all(self):
+        out = r.process_hits("שאלה", self.hits(), products=["health-insurance"], hard=True)   # health is at 0.40 > 0.30
+        self.assertEqual(out.groups, [])
+        self.assertTrue(out.product_miss)
+        out = r.process_hits("שאלה", self.hits(), products=["travel-insurance"], hard=True)   # no chunk at all
+        self.assertEqual((out.groups, out.product_miss), ([], True))
+
+    def test_a_soft_product_still_falls_back_to_everything_and_flags_the_miss(self):
+        out = r.process_hits("שאלה", self.hits(), products=["travel-insurance"])
+        self.assertTrue(out.product_miss)
+        self.assertGreaterEqual(len(out.groups), 3)
+
+    def test_the_index_search_is_filtered_by_topic_and_an_old_index_falls_back(self):
+        calls = []
+
+        class Col:
+            def __init__(self, topic_field):
+                self.topic_field = topic_field
+
+            def count(self):
+                return 50
+
+            def get(self, **kw):
+                return {"metadatas": [{"topic": "x"} if self.topic_field else {"area": "claims"}]}
+
+            def query(self, **kw):
+                calls.append(kw.get("where"))
+                return {"metadatas": [[]], "documents": [[]], "distances": [[]]}
+
+        for field, expected in ((True, {"topic": {"$in": ["personal-accident"]}}), (False, None)):
+            ret = r.Retriever(col=Col(field), embedder=object(), cache=object())
+            with unittest.mock.patch.object(r.embed, "embed_query", return_value=[0.0]):
+                out = ret.retrieve("מה מכסה ביטוח תאונות אישיות?", products=None, hard=True)
+            self.assertEqual(calls[-1], expected)
+        with unittest.mock.patch.object(r.embed, "embed_query", return_value=[0.0]):
+            r.Retriever(col=Col(True), embedder=object(), cache=object()).retrieve("שאלה כללית", products=["car-insurance"], hard=False)
+        self.assertIsNone(calls[-1])                                          # inherited: no filter in the search

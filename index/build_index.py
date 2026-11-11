@@ -197,7 +197,8 @@ def collection_meta() -> dict:
 def clean_metadata(c: dict) -> dict:
     """Chroma metadata: scalars only, never None."""
     skip = {"text"}
-    out = {}
+    from bot import retrieve                       # lazy: retrieve imports this module
+    out = {"topic": retrieve.topic_of(c["url"])}   # the product a question can filter on (claims pages too)
     for k, v in c.items():
         if k in skip:
             continue

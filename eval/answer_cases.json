@@ -152,6 +152,63 @@
           ]
         }
       ]
+    },
+    {
+      "id": "c3",
+      "note": "The accident question is ambiguous (car / personal accident / travel): clarify first; then the personal-accident button searches ONLY that product and answers from its claims pages.",
+      "turns": [
+        {
+          "user": "היה לי תאונה, אני רוצה להגיש תביעה?",
+          "expected_status": [
+            "clarify"
+          ]
+        },
+        {
+          "user": "היה לי תאונה, אני רוצה להגיש תביעה?",
+          "products": [
+            "personal-accident"
+          ],
+          "expected_status": [
+            "answered",
+            "partial"
+          ],
+          "must_mention": [
+            {
+              "label": "its claims page",
+              "any_of": [
+                "claims-personal-accident-insurance",
+                "pacclaim",
+                "טופס תביעה"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c4",
+      "note": "After the clarify the person types health insurance: only health pages are searched and they say nothing about accidents: not_found, never an answer about car insurance. KNOWN FAILING (11.11): health pages are close enough (0.22 < 0.30) so the model answers with an unrelated health-basket claim; see docs/decisions.md 45.",
+      "turns": [
+        {
+          "user": "היה לי תאונה, אני רוצה להגיש תביעה?",
+          "expected_status": [
+            "clarify"
+          ]
+        },
+        {
+          "user": "ביטוח בריאות",
+          "expected_status": [
+            "not_found"
+          ],
+          "forbidden_status": [
+            "answered",
+            "partial"
+          ],
+          "forbidden_topics": [
+            "car-insurance"
+          ]
+        }
+      ]
     }
   ]
 }

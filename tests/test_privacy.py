@@ -107,7 +107,7 @@ class SpyRetriever:
     def __init__(self):
         self.questions = []
 
-    def retrieve(self, question, products=None):
+    def retrieve(self, question, products=None, hard=False):
         self.questions.append(question)
         raise AssertionError("must not be reached for a personal question")
 
@@ -125,7 +125,7 @@ class TestNothingRawReachesTheApis(unittest.TestCase):
         seen = {}
 
         class Ret:
-            def retrieve(self, question, products=None):
+            def retrieve(self, question, products=None, hard=False):
                 seen["question"] = question
                 from bot import retrieve as r
                 hit = {"id": "i", "text": "הגשת תביעה > איך מגישים תביעה?\nיש למלא את הטופס באתר ולשלוח אותו. " * 3,
