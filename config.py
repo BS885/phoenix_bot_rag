@@ -319,7 +319,8 @@ TOPIC_URL_OVERRIDES = {"/health-insurance/personal-accidents/": "personal-accide
 # A product named in the question or chosen on a button filters the SEARCH (metadata "topic"). When none of its chunks is closer than
 # this, the answer is not_found with no model call (same coarse threshold as the clarify: nothing from that product is really close).
 RETRIEVE_PRODUCT_MAX_DISTANCE = 0.30
-AMBIGUOUS_PREFIX_LETTERS = "ובהלמשכ"   # one-letter prefixes allowed before the word (בתאונה, לתאונה, שתאונה...)
+CLARIFY_CHOICE_MAX_WORDS = 4   # a typed answer to a clarify naming a product, up to this many words, is joined to the original question
+AMBIGUOUS_PREFIX_LETTERS ="ובהלמשכ"   # one-letter prefixes allowed before the word (בתאונה, לתאונה, שתאונה...)
 COVERAGE_CAVEAT = ("ההסבר מבוסס על המידע הכללי באתר בלבד ואינו אישור כיסוי או זכאות. "
                    "לבדיקה לפי הפוליסה האישית ניתן לפנות לשירות הלקוחות.")
 SUSPECTED_PERSONAL_CAVEAT = ("אם השאלה נוגעת למקרה אישי, לא ניתן לבדוק אותו כאן. "

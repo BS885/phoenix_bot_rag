@@ -458,6 +458,40 @@ class TestHardProductInTheFlow(unittest.TestCase):
         self.assertEqual(out.status, "answered")                                  # fell back to the other products (soft)
 
 
+class TestChoiceJoinedToTheOriginalQuestion(unittest.TestCase):
+    ORIG = "היה לי תאונה, אני רוצה להגיש תביעה?"
+    HIST = [{"role": "user", "text": ORIG, "status": None}, {"role": "bot", "text": "על איזה תחום מדובר?", "status": "clarify"}]
+
+    def hits(self):
+        return [hit("/claims-customer-service/claims-health-insurance/x/", dist=0.2, n=0)]
+
+    def test_a_typed_choice_becomes_one_wording_for_the_search_and_the_model_with_no_rewrite_call(self):
+        ret, gen = FakeRetriever(self.hits()), Gen(reply())
+        out = a.answer("ביטוח בריאות", self.HIST, retriever=ret, generate=gen)
+        want = self.ORIG + " (בביטוח בריאות)"
+        self.assertEqual(ret.calls[0][0], want)
+        self.assertIn(f"<שאלה>{want}</שאלה>", gen.calls[0]["prompt"])
+        self.assertEqual(len(gen.calls), 1)                                        # the answer call only
+        self.assertEqual(out.debug["combined_question"], want)
+
+    def test_a_button_choice_is_joined_the_same_way(self):
+        ret = FakeRetriever(self.hits())
+        a.answer(self.ORIG, self.HIST, retriever=ret, generate=Gen(reply()), products=["health-insurance"])
+        self.assertEqual(ret.calls[0][0], self.ORIG + " (בביטוח בריאות)")
+        ret = FakeRetriever([hit("/claims-customer-service/claims-personal-accident-insurance/", dist=0.2, n=0)])
+        a.answer(self.ORIG, self.HIST, retriever=ret, generate=Gen(reply()), products=["personal-accident"])
+        self.assertEqual(ret.calls[0][0], self.ORIG + " (בביטוח תאונות אישיות)")
+
+    def test_a_new_long_question_or_a_choice_without_a_clarify_is_not_joined(self):
+        ret = FakeRetriever(self.hits())
+        out = a.answer("איך מגישים תביעה על החזר תרופות בביטוח בריאות?", self.HIST, retriever=ret,
+                       generate=Gen({"question": "איך מגישים תביעה על החזר תרופות בביטוח בריאות?"}, reply()))
+        self.assertNotIn("combined_question", out.debug)
+        out = a.answer("ביטוח בריאות", [{"role": "user", "text": "שלום"}, {"role": "bot", "text": "שלום!", "status": "greeting"}],
+                       retriever=FakeRetriever(self.hits()), generate=Gen({"question": "ביטוח בריאות"}, reply()))
+        self.assertNotIn("combined_question", out.debug)
+
+
 class TestClarify(unittest.TestCase):
     def two_products(self):
         return [hit("/claims-customer-service/claims-health-insurance/x/", dist=0.200, n=0),

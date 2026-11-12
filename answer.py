@@ -87,6 +87,28 @@ def _caveats(guard: guardrails.Guard, model_coverage: bool, model_personal: bool
     return [], False
 
 
+def _combine_choice(question: str, history: list[dict], products: list[str] | None) -> str | None:
+    """After a clarify turn: the original question + the chosen product in one wording, e.g.
+    "היה לי תאונה, אני רוצה להגיש תביעה? (בביטוח בריאות)". The choice is a button (products) or a short typed answer that names a
+    product. None when the last turn was not a clarify, or the typed text is a new question (longer than CLARIFY_CHOICE_MAX_WORDS)."""
+    if not history or history[-1].get("status") != "clarify":
+        return None
+    if products:                                           # button: the question is the original one
+        original, chosen = question, products[0]
+    else:
+        named = retrieve.detect_products(question)
+        if not named or len(question.split()) > config.CLARIFY_CHOICE_MAX_WORDS:
+            return None
+        original = next((t.get("text", "") for t in reversed(history[:-1]) if t.get("role") == "user"), "")
+        chosen = named[0]
+        if not original.strip():
+            return None
+    name = retrieve.topic_name(chosen)
+    if name in original:
+        return original
+    return f"{original} (ב{name})"
+
+
 # ---------- the flow ----------
 
 def answer(question: str, history: list[dict] | None = None, *, retriever=None, generate=None,
@@ -114,8 +136,13 @@ def answer(question: str, history: list[dict] | None = None, *, retriever=None, 
         debug["calls"] += 1
         return generate(user_prompt, built.schema, system=built.system, model=config.LLM_MODEL_ANSWER)
 
-    # 1. rewrite + guardrails
-    rw = rewrite_mod.rewrite(question, history, generate=generate)
+    # 1. rewrite + guardrails. The answer to a clarify (a button or a short typed product name) is joined to the ORIGINAL question in
+    #    one wording, which is then a complete question: no rewrite call, and the search and the model see the same thing.
+    combined = _combine_choice(question, history, products)
+    if combined:
+        debug["combined_question"] = combined
+        question = combined
+    rw = rewrite_mod.rewrite(question, None if combined else history, generate=generate)
     if products:                          # the person picked a product on the clarify buttons: it wins over inheritance
         rw.products, rw.inherited_product = list(products), False
     debug["calls"] += int(rw.called_model)
